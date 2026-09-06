@@ -14230,6 +14230,54 @@ function computeMonthlyStats(counts, dataInicioStr, dataFimStr){
   });
 }
 
+// "Acuracidade dos Itens Recorrentes" (página Acuracidade) — indicador
+// mensal restrito a itens que já têm 2 OU MAIS documentos de contagem no
+// histórico. Regra confirmada explicitamente pelo cliente como fundamental:
+// mede a acuracidade especificamente de itens que já passaram pelo processo
+// Inventário Cíclico → recontagem (contados de novo depois de já terem sido
+// contados antes), não a acuracidade geral do estoque — item com só 1
+// documento (nunca recontado) fica de fora por completo, não é fabricado
+// nem tratado como 100%/0%.
+//
+// Elegibilidade ("2+ documentos") é avaliada sobre `pool` INTEIRO — o
+// histórico completo do código, nunca só o recorte `dataInicioStr..
+// dataFimStr` — decisão confirmada explicitamente com o cliente: um item
+// não pode entrar/sair da base de cálculo só porque o filtro de período
+// mudou, só porque ele genuinamente ganhou ou perdeu um documento de
+// contagem. Só a MONTAGEM DO GRÁFICO (quais meses aparecem) respeita o
+// intervalo de data.
+//
+// `pool` já deve vir deduplicado por documento (`ultimaContagemPorDocumento`,
+// mesmo pool usado pelo resto da página Acuracidade) — cada entrada aqui já
+// é a rodada FINAL de um documento (a que decidiu o resultado, já refletindo
+// ajuste/devolução quando aplicável), nunca uma rodada intermediária de
+// recontagem já superada — é isso que evita contar a mesma "última
+// contagem" duas vezes dentro do mesmo mês/período.
+//
+// Cada mês é atribuído pelo campo `.data` do PRÓPRIO documento de contagem
+// (via `computeMonthlyStats`/`getMonthInfo`) — nunca uma data de cadastro/
+// atualização de outra natureza.
+function computeAcuracidadeItensRecorrentes(pool, dataInicioStr, dataFimStr){
+  const porCodigo = {};
+  pool.forEach(c=>{
+    if(!c.data || !c.productCode) return;
+    (porCodigo[c.productCode] = porCodigo[c.productCode] || []).push(c);
+  });
+  const elegiveis = [];
+  let codigosElegiveis = 0;
+  Object.values(porCodigo).forEach(arr=>{
+    if(arr.length < 2) return; // regra fundamental: só itens com 2+ documentos
+    codigosElegiveis++;
+    arr.forEach(c=>elegiveis.push(c));
+  });
+  const monthlyStats = computeMonthlyStats(elegiveis, dataInicioStr, dataFimStr);
+  const mesesComDado = monthlyStats.filter(m=>m.acuracidade!=null);
+  const acuracidadeMedia = mesesComDado.length>0
+    ? mesesComDado.reduce((s,m)=>s+m.acuracidade,0)/mesesComDado.length
+    : null;
+  return { monthlyStats, codigosElegiveis, totalDocumentos: elegiveis.length, acuracidadeMedia };
+}
+
 // Pool "Tendência" — TODA contagem/rodada registrada (inclui item ainda
 // pendente de decisão, NÃO deduplica por documento — se um item foi
 // recontado, as duas rodadas entram) — o mesmo conjunto que já alimenta
@@ -14513,7 +14561,7 @@ function WeeklyCountChart({weeks, meta=META_CONTAGENS_SEMANAL}){
 // 34) porque as colunas costumam bater perto de 100%, e o rótulo do valor
 // fica ACIMA da barra — precisa de mais respiro entre o topo do SVG e a
 // grade de "100%" pra não ficar espremido.
-function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL}){
+function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL, colorByMeta=false}){
   const W = 760, H = 220, padL = 34, padR = 30, padT = 38, padB = 40;
   const chartW = W - padL - padR, chartH = H - padT - padB;
   const n = months.length;
@@ -14536,10 +14584,10 @@ function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL}){
         <g key={m.key}>
           {m.acuracidade!=null ? (
             <>
-              <rect x={x(i)-barW/2} y={y(m.acuracidade)} width={barW} height={Math.max(0, y(0)-y(m.acuracidade))} rx={4} fill={WEEKLY_CHART_COLOR}>
-                <title>{m.label} ({m.sublabel}): {m.acuracidade.toFixed(1)}% · {m.total} contagem(ns)</title>
+              <rect x={x(i)-barW/2} y={y(m.acuracidade)} width={barW} height={Math.max(0, y(0)-y(m.acuracidade))} rx={4} fill={colorByMeta && m.acuracidade>=meta ? 'var(--ok)' : WEEKLY_CHART_COLOR}>
+                <title>{m.label} ({m.sublabel}): {m.acuracidade.toFixed(1)}% · {m.total} contagem(ns){colorByMeta ? (m.acuracidade>=meta ? ' · dentro da meta' : ' · abaixo da meta') : ''}</title>
               </rect>
-              <text x={x(i)} y={y(m.acuracidade)-8} textAnchor="middle" fontSize={11} fontWeight={700} fill="var(--ink)" fontFamily="var(--font-mono)">{Math.round(m.acuracidade)}%</text>
+              <text x={x(i)} y={y(m.acuracidade)-8} textAnchor="middle" fontSize={11} fontWeight={700} fill={colorByMeta ? (m.acuracidade>=meta ? 'var(--ok)' : 'var(--danger)') : 'var(--ink)'} fontFamily="var(--font-mono)">{Math.round(m.acuracidade)}%</text>
             </>
           ) : (
             <rect x={x(i)-2} y={y(0)-3} width={4} height={3} fill="var(--ink-dim)" opacity={0.5}>
@@ -14550,60 +14598,6 @@ function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL}){
           <text x={x(i)} y={H-11} textAnchor="middle" fontSize={10} fill="var(--ink-dim)" fontFamily="var(--font-mono)">{m.sublabel}</text>
         </g>
       ))}
-    </svg>
-  );
-}
-
-// "Acuracidade" (Resumo da Operação) deixa de ser 2 cards com número solto e
-// vira um gráfico de colunas comparando "Geral" (todo o estoque, mesma
-// fórmula/pool de sempre) contra "Contados" (só os itens que já passaram
-// por contagem física) — pedido do cliente pra virar "leitura visual
-// rápida da performance", não um número dentro de um card. Mesmo eixo Y
-// fixo 0-100% + linha de meta tracejada já usados em
-// `MonthlyAccuracyBarChart` — a diferença é que aqui as colunas são
-// CATEGORIAS fixas (2 indicadores), não uma série temporal: recebe `itens`
-// já prontos (label/valor/subtítulo calculados por quem chama, exatamente
-// os mesmos `acuracidade`/`acuracidadeItensContados` que os cards antigos
-// já mostravam — nenhuma fórmula nova, só uma exibição diferente pro mesmo
-// número). Cada coluna mostra o valor grande acima da barra, o rótulo da
-// categoria e a diferença em pontos percentuais pra meta (verde quando já
-// bate a meta, laranja/vermelho quando ainda falta) — a cor da própria
-// barra também reflete isso (verde=dentro da meta, teal=abaixo dela).
-function AccuracyComparisonBarChart({itens, meta=META_ACURACIDADE_SEMANAL}){
-  const W = 760, H = 220, padL = 34, padR = 30, padT = 38, padB = 48;
-  const chartW = W - padL - padR, chartH = H - padT - padB;
-  const n = itens.length;
-  const slot = chartW / n;
-  const barW = Math.min(150, slot * 0.4);
-  const x = i => padL + i*slot + slot/2;
-  const y = v => padT + chartH - (v/100)*chartH;
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',display:'block'}} role="img" aria-label="Gráfico comparativo de acuracidade">
-      {[0,25,50,75,100].map(t=>(
-        <g key={t}>
-          <line x1={padL} x2={W-padR} y1={y(t)} y2={y(t)} stroke="var(--line)" strokeWidth={1} strokeDasharray="3,3" />
-          <text x={padL-8} y={y(t)+3.5} textAnchor="end" fontSize={10} fill="var(--ink-dim)" fontFamily="var(--font-mono)">{t}%</text>
-        </g>
-      ))}
-      <line x1={padL} x2={W-padR} y1={y(meta)} y2={y(meta)} stroke={WEEKLY_CHART_COLOR} strokeWidth={1.5} strokeDasharray="5,4" opacity={0.65}>
-        <title>Meta: {meta}%</title>
-      </line>
-      {itens.map((it,i)=>{
-        const valor = Number(it.valor) || 0;
-        const diff = valor - meta;
-        const dentroDaMeta = valor >= meta;
-        const cor = dentroDaMeta ? 'var(--ok)' : WEEKLY_CHART_COLOR;
-        return (
-          <g key={it.key}>
-            <rect x={x(i)-barW/2} y={y(valor)} width={barW} height={Math.max(0, y(0)-y(valor))} rx={6} fill={cor}>
-              <title>{it.label}: {valor.toFixed(1)}% ({diff>=0?'+':''}{diff.toFixed(1)} p.p. da meta){it.subtitulo ? (' · '+it.subtitulo) : ''}</title>
-            </rect>
-            <text x={x(i)} y={y(valor)-8} textAnchor="middle" fontSize={16} fontWeight={700} fill="var(--ink)" fontFamily="var(--font-mono)">{valor.toFixed(1)}%</text>
-            <text x={x(i)} y={H-32} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--ink)" fontFamily="var(--font-corp)">{it.label}</text>
-            <text x={x(i)} y={H-17} textAnchor="middle" fontSize={10} fontWeight={700} fill={dentroDaMeta ? 'var(--ok)' : 'var(--danger)'} fontFamily="var(--font-mono)">{diff>=0?'+':''}{diff.toFixed(1)} p.p. da meta</text>
-          </g>
-        );
-      })}
     </svg>
   );
 }
@@ -15029,14 +15023,11 @@ function Dashboard({counts, inventories, historicoConcluidas=[], historicoParaTe
   // gráfico sempre mostra o ano corrente inteiro até hoje.
   const anoAtualStr = String(new Date().getFullYear()) + '-01-01';
   const monthlyStats = computeMonthlyStats(poolTendencia, anoAtualStr, hojeStr);
-  // "Acuracidade Geral"/"Acuracidade dos Itens Contados" (o gráfico
-  // comparativo, `AccuracyComparisonBarChart`) e "Efeito dos Ajustes
-  // Aprovados" saíram daqui — moram na página "Acuracidade" agora (ver
-  // `AcuracidadePanel`), que recalcula `monthlyStatsItensContados`/
-  // `acuracidadeItensContados`/`efeitoAjustes` de forma independente, com
-  // as MESMAS fórmulas de sempre (nenhuma mudança de regra de cálculo,
-  // só de página). `monthlyStats` continua aqui, intocado, só pra
-  // "Acuracidade Mensal".
+  // O indicador de acuracidade recorrente e "Efeito dos Ajustes Aprovados"
+  // saíram daqui — moram na página "Acuracidade" agora (ver
+  // `AcuracidadePanel`, que recalcula tudo de forma independente, sem
+  // compartilhar estado com este componente). `monthlyStats` continua
+  // aqui, intocado, só pra "Acuracidade Mensal".
 
   // "Contados × Divergências" (pizza) — pedido do cliente: "indicador que
   // me mostra quantidade contada X divergências", "gráfico de pizza de
@@ -15427,39 +15418,25 @@ function AcuracidadePanel({counts, historicoConcluidas=[], historicoParaTendenci
   let dataInicioStr = trendRange.from, dataFimStr = trendRange.to;
   if(dataInicioStr > dataFimStr) dataInicioStr = dataFimStr;
 
-  // "Acuracidade Geral do Estoque" — ATUALIZADO nesta rodada, pedido
-  // explícito do cliente: antes usava `poolTendencia` (sem deduplicar —
-  // cada RODADA registrada contava como um ponto separado), o que fazia
-  // uma 1ª contagem errada (ex.: 40%) continuar arrastando a média pra
-  // baixo mesmo depois de uma recontagem já ter corrigido o item (100%) —
-  // um erro operacional já resolvido não pode continuar penalizando a
-  // acuracidade. Passou a usar `todasParaQualidade` — o MESMO pool
-  // deduplicado por documento (via `ultimaContagemPorDocumento`) que
-  // "Acuracidade dos Itens Contados" já usava — só a rodada FINAL de cada
-  // documento conta. Cliente confirmou explicitamente que o dedup deve
-  // ser só POR DOCUMENTO (a cadeia 1ª contagem→recontagem de um mesmo
-  // inventário), não por código ao longo de documentos DIFERENTES — dois
-  // documentos independentes do mesmo código continuam contando duas
-  // vezes, decisão já tomada antes e mantida aqui.
-  // Efeito colateral esperado e já comunicado ao cliente: como os dois
-  // cards agora leem do MESMO pool, "Geral" e "Contados" ficam
-  // numericamente idênticos até uma rodada futura diferenciar "Geral"
-  // incluindo itens NUNCA contados (fora do escopo desta correção,
-  // combinado explicitamente com o cliente como "só o fix da
-  // deduplicação" — a separação nunca-contados/recorrência/layout de 4
-  // seções do pedido original fica pra depois).
   const anoAtualStr = String(new Date().getFullYear()) + '-01-01';
-  const monthlyStats = computeMonthlyStats(todasParaQualidade, anoAtualStr, hojeStr);
-  const mesesComAcuracidade = monthlyStats.filter(m=>m.acuracidade!=null);
-  const acuracidade = (mesesComAcuracidade.length>0 ? (mesesComAcuracidade.reduce((s,m)=>s+m.acuracidade,0)/mesesComAcuracidade.length) : 100).toFixed(1);
 
-  // "Acuracidade dos Itens Contados" — mesmo pool/fórmula de sempre
-  // (`todasParaQualidade`, deduplicado por documento — só a rodada final
-  // de cada item, refletindo ajuste/devolução quando aplicável). Continua
-  // igual — é o card que já fazia certo antes desta correção.
-  const monthlyStatsItensContados = computeMonthlyStats(todasParaQualidade, anoAtualStr, hojeStr);
-  const mesesComAcuracidadeItensContados = monthlyStatsItensContados.filter(m=>m.acuracidade!=null);
-  const acuracidadeItensContados = (mesesComAcuracidadeItensContados.length>0 ? (mesesComAcuracidadeItensContados.reduce((s,m)=>s+m.acuracidade,0)/mesesComAcuracidadeItensContados.length) : 100).toFixed(1);
+  // "Acuracidade dos Itens Recorrentes" — SUBSTITUI por completo o antigo
+  // comparativo "Geral vs. Contados" (`AccuracyComparisonBarChart`), pedido
+  // explícito do cliente depois de uma auditoria da metodologia: os dois
+  // cards antigos já liam do mesmo pool deduplicado por documento
+  // (`todasParaQualidade`) e por isso sempre mostravam o MESMO número —
+  // nunca respondiam de verdade "depois que o item entrou no Inventário
+  // Cíclico e foi recontado, qual acuracidade estamos conseguindo manter
+  // mês a mês?". O indicador novo restringe a base de cálculo — regra
+  // confirmada como FUNDAMENTAL pelo cliente — a itens com 2 OU MAIS
+  // documentos de contagem no histórico (já recontados pelo menos uma vez);
+  // item com só 1 documento (nunca recontado) fica de fora por completo,
+  // nunca é fabricado como 100%/0%. Elegibilidade avaliada sobre
+  // `todasParaQualidade` INTEIRO (histórico completo do código), não só o
+  // recorte "ano atual até hoje" do gráfico — um item não entra/sai da base
+  // só porque o mês mudou, só porque ele genuinamente ganhou/perdeu um
+  // documento (ver comentário completo em `computeAcuracidadeItensRecorrentes`).
+  const acuracidadeRecorrentes = computeAcuracidadeItensRecorrentes(todasParaQualidade, anoAtualStr, hojeStr);
 
   // "Efeito dos Ajustes Aprovados" — mesmo pool deduplicado
   // (`todasParaQualidade`) e o mesmo intervalo de data do filtro desta
@@ -15469,24 +15446,43 @@ function AcuracidadePanel({counts, historicoConcluidas=[], historicoParaTendenci
   return (
     <div>
       <div className="section-title">Acuracidade</div>
+
+      <div className="ops-kpi-row ops-kpi-row-auto">
+        <div className="ops-kpi-card">
+          <div className="ops-kpi-head">
+            <span className="ops-kpi-label">Acuracidade Média — Itens Recorrentes</span>
+            <span className="ops-kpi-icon" style={{background:'var(--purple-bg)', color:'var(--purple)'}}><DIcon name="percent" size={15} /></span>
+          </div>
+          <div className="ops-kpi-value">{acuracidadeRecorrentes.acuracidadeMedia==null ? '—' : acuracidadeRecorrentes.acuracidadeMedia.toFixed(1)+'%'}</div>
+          {acuracidadeRecorrentes.acuracidadeMedia==null ? (
+            <div className="ops-kpi-meta">sem dado no período em tela</div>
+          ) : (
+            <div className={'ops-kpi-meta'+(acuracidadeRecorrentes.acuracidadeMedia<META_ACURACIDADE_SEMANAL ? ' danger' : '')}>
+              {(acuracidadeRecorrentes.acuracidadeMedia-META_ACURACIDADE_SEMANAL>=0?'+':'')}{(acuracidadeRecorrentes.acuracidadeMedia-META_ACURACIDADE_SEMANAL).toFixed(1)} p.p. da meta de {META_ACURACIDADE_SEMANAL}%
+            </div>
+          )}
+        </div>
+        <div className="ops-kpi-card">
+          <div className="ops-kpi-head">
+            <span className="ops-kpi-label">Itens Recorrentes (2+ Documentos)</span>
+            <span className="ops-kpi-icon" style={{background:'var(--teal-bg)', color:'var(--teal)'}}><DIcon name="repeat" size={15} /></span>
+          </div>
+          <div className="ops-kpi-value">{acuracidadeRecorrentes.codigosElegiveis}</div>
+          <div className="ops-kpi-meta">{acuracidadeRecorrentes.totalDocumentos} documento(s) de contagem no histórico</div>
+        </div>
+      </div>
+
       <div className="panel" style={{marginBottom:24}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:4}}>
-          <div style={{fontSize:'var(--text-sm)',fontWeight:700}}>Acuracidade (%)</div>
+          <div style={{fontSize:'var(--text-sm)',fontWeight:700}}>Acuracidade Mensal — Itens Recorrentes (%)</div>
           <span className="chart-meta-badge">Meta: {META_ACURACIDADE_SEMANAL}%</span>
         </div>
         <div style={{fontSize:'var(--text-xs)',color:'var(--ink-dim)',marginBottom:16}}>
-          Geral do estoque vs. só os itens que já passaram por contagem física.
+          Só itens já contados 2 vezes ou mais (entraram no Inventário Cíclico e foram recontados
+          pelo menos uma vez) — item contado só 1 vez fica de fora, não é fabricado como 100%/0%.
+          Cada mês usa a data do próprio documento de contagem.
         </div>
-        <AccuracyComparisonBarChart
-          itens={[
-            {key:'geral', label:'Geral', valor:acuracidade, subtitulo:'todo o estoque'},
-            {key:'contados', label:'Contados', valor:acuracidadeItensContados, subtitulo:todasParaQualidade.length+' item(ns) já contado(s)'},
-          ]}
-          meta={META_ACURACIDADE_SEMANAL}
-        />
-        <div style={{fontSize:'var(--text-xs)',color:'var(--ink-dim)',marginTop:10}}>
-          <strong>Contados:</strong> baseado em {todasParaQualidade.length} item(ns) já contado(s).
-        </div>
+        <MonthlyAccuracyBarChart months={acuracidadeRecorrentes.monthlyStats} meta={META_ACURACIDADE_SEMANAL} colorByMeta={true} />
       </div>
 
       <TrendFilterBar

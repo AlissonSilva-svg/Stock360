@@ -22248,3 +22248,116 @@ publicar.
 o layout de 4 seções do pedido original de auditoria — nenhum dos três foi pedido nesta
 rodada ("sim, alinhe" só cobriu a dedup), continuam aguardando uma decisão futura do
 cliente.
+
+## Indicador de acuracidade em "Acuracidade" vira mensal, restrito a itens com 2+ documentos
+
+Continuação direta da auditoria/alinhamento das duas rodadas anteriores ("Auditoria da
+página 'Acuracidade' + correção escopada"/"'sim, alinhe'") — o cliente mandou um print da
+página "Acuracidade" (o card comparativo "Geral vs. Contados", `AccuracyComparisonBarChart`)
+com uma especificação numerada, pedindo pra refazer o indicador de destaque da página:
+
+1. Bater EXATO com o tamanho/proporção/espaçamento/padrão visual dos cards de
+   "Indicadores" ("como se os cards fizessem parte do mesmo sistema"), com a restrição
+   dura: **"Não aumente ou diminua outros elementos da página desnecessariamente. O
+   ajuste deve ser focado no indicador de acuracidade."**
+2. Virar mensal (não mais um único par de números fixos "Geral"/"Contados").
+3. **Regra fundamental** (ênfase do próprio cliente): só entram no cálculo mensal itens
+   com **2 ou mais documentos de contagem** — 0 ou 1 documento excluem o item por
+   completo, nunca fabricados como 0%/100%.
+4. Meta continua 95%, mostrada junto do valor mensal, linha de meta, meses acima/abaixo
+   da meta, e tendência de evolução.
+5. O agrupamento por mês precisa usar a DATA do próprio documento de contagem (nunca uma
+   data de cadastro/atualização), e nunca pode contar o mesmo item errado dentro de um
+   período.
+6. Escopo: **"Não altere outras regras da página de Acuracidade."** — só o indicador de
+   destaque muda; o resto da página (painel "Filtros", "Efeito dos Ajustes Aprovados")
+   continua igual.
+
+Duas decisões interpretativas levantadas e confirmadas com o cliente antes de
+implementar (via `AskUserQuestion`), resolvidas com a aprovação final, sem ressalva:
+**"Pode implementar."**
+
+- **Elegibilidade "2+ documentos" é avaliada sobre o HISTÓRICO INTEIRO do item**, não só
+  a janela de data visível no gráfico (o mesmo filtro de período que já existia na
+  página) — um item cujo 2º documento cai fora do intervalo escolhido continua elegível
+  (o histórico completo já prova que ele foi recontado), só o que aparece DESENHADO no
+  eixo do gráfico respeita o filtro de período escolhido.
+- **O painel comparativo antigo ("Geral vs. Contados", `AccuracyComparisonBarChart`) foi
+  removido por completo**, não mantido lado a lado com o indicador novo — cliente
+  confirmou substituição total, não coexistência.
+
+### O que mudou
+
+- **`AccuracyComparisonBarChart` (componente inteiro) apagado** — sem nenhum consumidor
+  restante (era usado só dentro de `AcuracidadePanel`), sem deixar código morto.
+- **`computeAcuracidadeItensRecorrentes(pool, dataInicioStr, dataFimStr)`** (função nova,
+  perto de `computeEfeitoAjustes`, mesma técnica de agrupamento por `productCode` já
+  usada ali) — agrupa o pool INTEIRO por código, conta quantos documentos distintos cada
+  código tem no histórico completo (`itemAcuracidade` calculado por documento, `.data`
+  como chave de mês via `getMonthInfo`), e só inclui no cálculo (e no gráfico) os códigos
+  com **2 ou mais documentos**. Devolve `{codigosElegiveis, totalDocumentos,
+  acuracidadeMedia, monthlyStats}` — `monthlyStats` já vem zero-preenchido mês a mês
+  entre `dataInicioStr`/`dataFimStr` (mesmo padrão de `computeMonthlyStats`, reaproveitado
+  internamente), mas só com os documentos dos códigos elegíveis, dentro da janela pedida —
+  a elegibilidade (histórico inteiro) e o que aparece no eixo (janela do gráfico) são
+  cálculos deliberadamente separados, nunca um vazando indevidamente no outro.
+- **`AcuracidadePanel` reescrito**: em vez do card fixo "Geral vs. Contados", chama
+  `computeAcuracidadeItensRecorrentes(todasParaQualidade, dataInicioStr, dataFimStr)`
+  (mesmo pool já deduplicado por documento via `ultimaContagemPorDocumento`, mesmo
+  intervalo do painel "Filtros" já existente — nenhum pool/filtro novo) e monta:
+  - **2 cards no padrão EXATO de "Indicadores"** — mesmas classes CSS já existentes
+    (`.ops-kpi-row`/`.ops-kpi-row-auto`/`.ops-kpi-card`/`.ops-kpi-head`/`.ops-kpi-label`/
+    `.ops-kpi-icon`/`.ops-kpi-value`/`.ops-kpi-meta`, reaproveitando `--purple`/
+    `--purple-bg`/`--teal`/`--teal-bg` já existentes pros ícones) — **nenhuma classe CSS
+    nova**, satisfazendo literalmente "não aumente ou diminua outros elementos... o ajuste
+    deve ser focado no indicador de acuracidade": "Acuracidade Recorrente" (a média
+    mensal, com a meta de 95% e "N item(ns) elegível(is), M documento(s)" como subtítulo
+    real) e "Itens com Múltiplas Contagens" (contador simples de `codigosElegiveis`, pra
+    deixar claro de cara quantos itens de fato entram na conta).
+  - **`MonthlyAccuracyBarChart` ganha um `colorByMeta` novo, opcional** — quando `true`
+    (só usado aqui), pinta cada barra/rótulo de verde (`var(--ok)`) quando o mês bate a
+    meta e de vermelho (`var(--danger)`) quando não bate, com um `<title>` explicando
+    "dentro da meta"/"abaixo da meta" — sem essa prop (o uso pré-existente em "Indicadores",
+    gráfico "Acuracidade Mensal"), o componente continua 100% igual a antes (barra sempre
+    teal, texto sempre `var(--ink)`, sem texto extra no title) — opt-in puro, zero
+    regressão no gráfico já publicado que reaproveita o mesmo componente.
+  - Empty-state honesto ("Nenhum item com 2+ contagens no período selecionado.") quando
+    `codigosElegiveis===0` — nunca um gráfico vazio sem explicação.
+- **Fora de escopo, intocado**: o cálculo do Excel (`buildSummaryRows`/
+  `acuracidadeMediaMensal`), `TrendFilterBar`/o painel "Filtros" em si, a seção "Efeito
+  dos Ajustes Aprovados" (mesma página, mesmo componente `AcuracidadePanel`, mas nenhuma
+  linha tocada), os gráficos "Acuracidade Mensal"/"Acuracidade Semanal" de Indicadores
+  (`Dashboard`, que continua usando `poolTendencia`/`monthlyStats` exatamente como antes
+  — só ganhou um comentário atualizado explicando pra onde a lógica de recorrência foi),
+  e o card "Acuracidade do Estoque" da Home.
+
+### Verificação
+
+Testado via 2 harnesses novos (mesma técnica rigorosa de sempre — extração literal do
+código real via brace-matching, sem depender de rede):
+
+- **`verify_acuracidade_itens_recorrentes.js`** (lógica pura, sem DOM) — as 4 regras de
+  correção do cliente, cada uma provada: item com 1 documento só é excluído por completo
+  (nunca fabricado como 0%/100%); código com 2+ documentos entra, cada um no mês certo
+  via a própria data; elegibilidade avaliada sobre o histórico INTEIRO do pool (um
+  documento de 2020 fora da janela do gráfico de 2026 ainda conta pra elegibilidade, mas
+  nunca "vaza" pro eixo do gráfico); nenhum documento contado 2x (a função confia no
+  dedup já feito pelo chamador, não duplica). Mais 2 casos defensivos (pool vazio nunca
+  fabrica número; registro sem `.data`/`.productCode` é ignorado sem quebrar). **19
+  passando, 0 falhando.**
+- **`verify_monthly_chart_colorbymeta.js`** (renderização real via `react-dom/server` +
+  Babel transpilando o JSX literal do componente) — confirma que `colorByMeta:true`
+  pinta verde/vermelho e adiciona o texto de meta no `<title>` só quando o mês bate/não
+  bate a meta, e que **sem** `colorByMeta` (o uso pré-existente em Indicadores) o
+  componente nunca usa `var(--ok)`/`var(--danger)`, nunca menciona meta no title, e
+  sempre usa a cor teal/ink de sempre — prova concreta de zero regressão visual no
+  gráfico já publicado que compartilha o mesmo componente. **11 passando, 0 falhando.**
+
+Transpile Babel do arquivo inteiro e balanceamento de chaves do CSS conferidos (685/685,
+sem mudança — nenhuma classe CSS nova, só JS/JSX dentro de `AcuracidadePanel`/
+`MonthlyAccuracyBarChart`). **Nenhuma migração de SQL nem redeploy de Edge Function
+necessários** — é só JS de front-end, publica sozinho via GitHub Pages assim que o
+deploy processar. **Verificação visual de ponta a ponta em produção (o tamanho/
+proporção dos cards batendo de fato com Indicadores, a evolução mês a mês fazendo
+sentido com o histórico real) fica a cargo do cliente** — mesma limitação de sempre
+(login exige Supabase Auth real, não simulável no sandbox sem rede).
