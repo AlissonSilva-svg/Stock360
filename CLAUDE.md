@@ -22052,3 +22052,199 @@ ver seção "Bloqueio real..." mais acima).
   item real (000.65761) fica a cargo do cliente** — mesma limitação de
   sempre (login exige Supabase Auth real, não simulável no sandbox sem rede,
   e o sandbox tampouco tem acesso à consulta interna da Selgron).
+
+**Confirmado em produção pelo cliente** — a correção foi mesclada ([PR #12](https://github.com/selgron-estoque/selgron-estoque.github.io/pull/12)) e o deploy do GitHub Pages concluiu com sucesso; o cliente testou de verdade em produção e confirmou que o recurso funciona.
+
+## Auditoria da página "Acuracidade" + correção escopada: "Geral" passa a deduplicar por documento
+
+Cliente pediu uma **auditoria** (não uma mudança de código) da metodologia de cálculo por
+trás da página "Acuracidade" (`AcuracidadePanel`) — com a restrição explícita, repetida
+duas vezes: **"Não faça alterações no código ainda"**. Pediu especificamente: (1) validar
+se a metodologia atual representa a realidade dos dados, sem alterar o cálculo só pra
+melhorar o resultado; (2) análise separada de 3 grupos — itens nunca contados, contados
+1x, contados mais de 1x; (3) um indicador de "recorrência" (Sem recorrência/Recorrência/
+Alta recorrência) — o mesmo problema de divergência se repete entre contagens?; (4) separar
+"Estoque ainda não validado" de "Estoque já validado" contra a meta de 95%, com a restrição
+dura: **"Não quero que o sistema esconda ou dilua um resultado abaixo de 95% misturando-o
+com itens que nunca foram contados"**; (5) um layout sugerido de 4 seções (ACURACIDADE
+GERAL/EVOLUÇÃO DO INVENTÁRIO CÍCLICO/IMPACTO DO INVENTÁRIO CÍCLICO/RECORRÊNCIA DE
+DIVERGÊNCIAS); (6) 7 perguntas específicas de auditoria.
+
+### Achados da auditoria (entregues sem tocar em código, como pedido)
+
+- **O card "Geral" NUNCA incluiu itens nunca contados** — não existe, em nenhum lugar do
+  código, nenhum mecanismo que leia o catálogo inteiro (85 mil+ códigos) e cruze contra o
+  que já foi contado; o rótulo "Geral" é enganoso (sugere "estoque inteiro"), mas o pool
+  real (`poolTendencia`) sempre foi só "toda contagem já registrada" — item nunca contado
+  nunca pôde "diluir" o resultado, porque nunca entrou no cálculo pra começo de conversa.
+- **Achado real e mais grave**: "Geral" usava `poolTendencia` (via `buildPoolTendencia`),
+  que soma CADA RODADA de uma cadeia de recontagem como um ponto separado, sem deduplicar
+  — um item que divergiu na 1ª contagem (ex.: 40% de acurácia) e foi corrigido na
+  recontagem (100%) entrava no pool DUAS VEZES, arrastando a média geral pra baixo com um
+  número que já tinha sido resolvido. Confirmado com exemplo numérico exato contra o código
+  real (não de memória).
+- **"Contados" já fazia certo** — usa `todasParaQualidade` (via `ultimaContagemPorDocumento`),
+  que já deduplica por documento, mantendo só a rodada FINAL de cada cadeia. O defeito real
+  era "Geral" não usar esse mesmo dedup, não os dois cards juntos.
+- **`ultimaContagemPorDocumento` só deduplica DENTRO da mesma cadeia** (1ª contagem→
+  recontagem de um mesmo documento/inventário) — nunca entre documentos INDEPENDENTES do
+  mesmo código ao longo do tempo, decisão já confirmada explicitamente pelo cliente antes
+  ("se for documento diferente então precisa considerar duas acuracidades").
+  `computeEfeitoAjustes` é o precursor mais próximo de "recorrência" entre documentos
+  diferentes, mas escopado só a itens com SA de Ajuste/Devolução aprovados.
+  `acuracidadeMediaMensal` — usada só pelo export Excel (`buildSummaryRows`) — tinha um
+  comentário de cabeçalho desatualizado, dizendo ser "a única fonte de verdade" pra Home/
+  Dashboard/Excel; na prática, Home e Dashboard já tinham voltado a calcular por conta
+  própria numa rodada anterior — achado secundário, só de documentação, não corrigido.
+  Proposta de query SQL passada ao cliente rodar (sandbox sem acesso à base real) pra
+  confirmar volume de itens com mais de um documento/código ao longo do tempo.
+
+### Escopo confirmado com o cliente, passo a passo, antes de qualquer edição
+
+- Cliente citou de volta minha própria afirmação sobre a distorção 40%/100% — reverifiquei
+  contra o código real (não de memória) com o exemplo numérico exato.
+- **"isso aqui é preocupante, precisa considerar a acuracia apenas da última contagem"** —
+  expliquei que "Contados" já faz exatamente isso; o defeito real é só "Geral" não usar o
+  mesmo dedup. Levantei uma bifurcação necessária antes de mexer em qualquer fórmula: "última
+  contagem" quer dizer última RODADA dentro do mesmo documento (o que "Contados" já faz) ou
+  última contagem física do código em QUALQUER documento ao longo do tempo (mais amplo,
+  reabriria a decisão já tomada sobre documentos diferentes)?
+- **Resposta explícita do cliente**: **"Opção 1, pois se houve uma contagem errada na
+  primeira vez e na recontagem foi contado e bateu, então a acuracidade não pode ser afetada
+  por um erro operacional"** — confirma o escopo (dedup só por documento, igual "Contados")
+  e a justificativa de negócio, preservada nos comentários da correção.
+- Sinalizei a consequência direta (com o mesmo pool, "Geral" e "Contados" ficam
+  numericamente idênticos até uma rodada futura diferenciar "Geral" incluindo itens nunca
+  contados) e perguntei via `AskUserQuestion` entre (a) só o fix escopado agora (cards
+  temporariamente iguais; separação nunca-contados/recorrência/layout de 4 seções fica pra
+  depois) ou (b) o fix + o redesenho completo do pedido original na mesma passada.
+- **Cliente escolheu explicitamente**: **"Só o fix da deduplicação (Recomendado)"** — opção
+  (a), o escopo desta correção.
+
+### O que mudou
+
+`AcuracidadePanel` — o cálculo de "Acuracidade Geral do Estoque" trocou de `poolTendencia`
+(`buildPoolTendencia(counts, historicoParaTendencia)`, sem dedup) pra `todasParaQualidade`
+(o MESMO pool deduplicado por documento — via `ultimaContagemPorDocumento` — que "Acuracidade
+dos Itens Contados" já usava), removendo a variável local `poolTendencia`/a chamada a
+`buildPoolTendencia` que ficaram sem uso dentro deste componente. Nenhuma outra parte do
+componente (TrendFilterBar, "Efeito dos Ajustes Aprovados") foi tocada — nem `acuracidadeGeralAte`
+(Home, "Acuracidade do Estoque") nem `buildSummaryRows`/`acuracidadeMediaMensal` (export
+Excel), que compartilham EXATAMENTE o mesmo defeito (pool não deduplicado) mas ficaram
+deliberadamente de fora do escopo autorizado — sinalizados ao cliente como possível trabalho
+de acompanhamento, não corrigidos nesta rodada.
+
+**Efeito colateral esperado, já comunicado e aceito pelo cliente**: como os dois cards agora
+leem o mesmo pool, "Geral" e "Contados" mostram o MESMO número até uma rodada futura separar
+"Geral" de verdade (incluindo itens nunca contados) — não é um bug, é a consequência direta
+da Opção 1 escolhida.
+
+Testado via harness dedicado (jsdom + react-dom/client + `act()`, mesma técnica rigorosa de
+sempre — carrega o `index.html` inteiro transpilado numa `vm`, sem depender de rede real):
+3 cenários — (1) sem nenhuma cadeia de recontagem, os dois cards batem (regressão, não prova
+o fix sozinho); (2) **a prova do fix** — cadeia de recontagem (1ª contagem 40%, recontagem
+100%) — confirma que os dois cards mostram 100% (só a rodada final), não mais 70% (a média
+das duas rodadas, o comportamento antigo); (3) 2 documentos INDEPENDENTES do mesmo código
+(sem `contagemAnteriorId` ligando um ao outro) continuam contando separado (70%, média dos
+dois) — confirma que a decisão "Opção 1" (dedup só por documento) foi respeitada, não uma
+dedup mais ampla por código. **Confirmado que o harness pega a regressão de verdade**:
+rodado contra o código de ANTES desta correção (`git stash`), o cenário 2 falha exatamente
+como esperado (70.0% vs 100.0%) — só com a correção aplicada é que passa 9/9. Transpile
+Babel do arquivo inteiro e balanceamento de chaves do CSS conferidos (685/685, sem mudança
+de contagem — só JS dentro de `AcuracidadePanel`, nenhuma classe CSS tocada). **Nenhuma
+migração de SQL nem redeploy de Edge Function necessários** — é só JS de front-end, publica
+sozinho via GitHub Pages assim que o deploy processar. **Verificação visual em produção fica
+a cargo do cliente** — mesma limitação de sempre (login exige Supabase Auth real, não
+simulável no sandbox sem rede) — mas como a correção é só de leitura/agregação em memória,
+já deve valer assim que o deploy publicar.
+
+**Pendente, sinalizado ao cliente, não implementado**: (1) `acuracidadeGeralAte` (Home) e
+`buildSummaryRows`/`acuracidadeMediaMensal` (export Excel) compartilham o mesmo defeito —
+vão continuar mostrando um número diferente (mais baixo, distorcido) do que a página
+Acuracidade recém-corrigida, pro que é nominalmente "a mesma métrica", até o cliente decidir
+se quer alinhar os dois também; (2) a separação nunca-contados/"Estoque não validado" vs.
+"validado", o indicador de recorrência entre documentos diferentes, e o layout de 4 seções
+do pedido original continuam fora de escopo, aguardando uma rodada futura.
+
+## "sim, alinhe" — Home e o export Excel passam a usar a mesma dedup por documento
+
+Continuação direta da rodada anterior — o cliente respondeu **"sim, alinhe"** à pendência já
+sinalizada ali ("`acuracidadeGeralAte` (Home) e `buildSummaryRows`/`acuracidadeMediaMensal`
+(export Excel) compartilham o mesmo defeito... até o cliente decidir se quer alinhar os dois
+também"). Confirma explicitamente: aplicar a MESMA correção (Opção 1 — dedup por documento
+via `ultimaContagemPorDocumento`, "se houve uma contagem errada na primeira vez e na
+recontagem foi contado e bateu, então a acuracidade não pode ser afetada por um erro
+operacional") nos dois lugares que faltavam, sem tocar em mais nada.
+
+### Tensão encontrada e resolvida antes de mexer em código
+
+Uma decisão do cliente BEM anterior a esta ("'Acuracidade Geral' vira a média das barras de
+'Acuracidade Mensal'") já tinha exigido que "Acuracidade do Estoque" (Home) batesse EXATO
+com a média das barras do gráfico "Acuracidade Mensal" (Dashboard) — que usa de propósito
+`poolTendencia`/`buildPoolTendencia` (sem dedup, cada rodada de recontagem pesa separado),
+com a justificativa na época: *"eu quero que a acuracidade mensal seja referente as
+contagens e a acuracidade geral seja referente a média mensal"*. Aplicar a Opção 1 aqui
+FAZ Home parar de bater com essa média — decisão consciente de deixar essa exigência mais
+antiga ser SUPERADA pela auditoria mais recente, no mesmo raciocínio já aceito quando
+"Geral" (`AcuracidadePanel`) foi corrigido antes (ele também parou de bater com a mesma
+média de "Acuracidade Mensal" na rodada anterior, sem o cliente reclamar) — "sim, alinhe"
+é a confirmação de que essa mesma prioridade vale pros outros dois pontos também.
+
+### O que mudou
+
+- **`acuracidadeGeralAte(pool, dataLimiteStr)`** — assinatura mudou (era `(counts,
+  historicoParaTendencia, dataLimiteStr)`) — passou a receber um pool JÁ DEDUPLICADO por
+  documento em vez de montar o próprio pool via `buildPoolTendencia` internamente. Único
+  call site: `Home.acumuladoAte`, que já calculava `relevantes` (dedup por documento +
+  corte por `dataLimite`, usado até então só por `total`/`divergentes`) — só passou a
+  reaproveitar essa MESMA variável pra `acuracidade` também, sem precisar montar nenhum
+  pool novo.
+  - Como `historicoParaTendencia` deixou de ter qualquer uso dentro de `Home` depois disso
+    (confirmado por busca restrita ao corpo da função), a prop foi removida da assinatura
+    de `Home` e do ponto de instanciação em `App()` — código morto de verdade, não uma
+    limpeza especulativa. **`AcuracidadePanel` continua com a mesma prop, hoje igualmente
+    sem uso** — deixada de propósito fora de escopo (pré-existente, de antes desta rodada,
+    "sim, alinhe" não pediu essa limpeza ali).
+- **`buildSummaryRows(counts, inventories)`** (export Excel, linha "Acuracidade do estoque
+  (%)") — `acuracidadeMediaMensal(counts)` virou `acuracidadeMediaMensal(ultimaContagemPorDocumento(counts))`.
+  **Só esta linha muda** — `contados` (Itens contados), `divergentes.length` (Divergências)
+  e `valorDivergente` (Valor total divergente) continuam somando o `counts` CRU, sem
+  deduplicar — decisão já tomada antes e sem relação com este pedido ("todas as contagens,
+  sem exceção", ver seção "Relatório Semanal (Diretoria)"/`ReportsScreen` no histórico
+  acima) — confirmado lendo os dois call sites de `generateReportWorkbook`
+  (`ReportsScreen.downloadWorkbook`/`InventoryList.handleDownload`), nenhum dos dois muda.
+
+### Verificação
+
+Testado via harness novo (`harness_home_excel_alinhamento.js`, jsdom + react-dom/client +
+`act()`, mesma técnica rigorosa de sempre — carrega o `index.html` inteiro transpilado
+numa `vm`): os MESMOS 3 cenários já usados pra provar o fix de `AcuracidadePanel`, agora
+contra `Home` (lendo o card "Acuracidade do Estoque" via `.pnl-kpi-label`/`.pnl-kpi-value`
+no DOM) e `buildSummaryRows` (função pura) — (1) sem cadeia, ambos mostram 100%, sem
+regressão; (2) **a prova** — cadeia de recontagem (1ª contagem 40%, recontagem 100%) — os
+dois mostram 100%, não mais 70% (a média das duas rodadas); (3) 2 documentos independentes
+do mesmo código continuam contando os dois (70%), confirmando que o dedup respeita a Opção 1
+(só por documento). Mais 4 asserções de "alinhamento cruzado" confirmando que Home e
+`buildSummaryRows` batem EXATAMENTE entre si nos 3 cenários — os 3 surfaces (página
+Acuracidade, Home, Excel) agora calculam a métrica de forma idêntica. E, no export Excel,
+confirmado que "Itens contados" (2, não 1) / "Divergências" (1) / "Valor total divergente"
+(60) continuam refletindo o `counts` CRU — só a linha de acuracidade foi tocada. 18
+asserções, todas passando. **Confirmado que o harness pega a regressão de verdade**: rodado
+contra o código de ANTES desta correção (`git stash`), 4 das 18 asserções falham exatamente
+como esperado — cenário 2 mostrando 70% em vez de 100% tanto em Home quanto em
+`buildSummaryRows` — só com a correção aplicada é que passa 18/18. Rodei de novo o harness
+já existente de `AcuracidadePanel` (`harness_acuracidade_dedup.js`) — continua passando
+sem nenhuma regressão. Transpile Babel do arquivo inteiro e balanceamento de chaves do CSS
+conferidos (685/685, sem mudança de contagem — só JS dentro de `Home`/`buildSummaryRows`/
+`App()`, nenhuma classe CSS tocada). **Nenhuma migração de SQL nem redeploy de Edge
+Function necessários** — é só JS de front-end, publica sozinho via GitHub Pages assim que
+o deploy processar. **Verificação visual em produção fica a cargo do cliente** — mesma
+limitação de sempre (login exige Supabase Auth real, não simulável no sandbox sem rede) —
+mas como a correção é só de leitura/agregação em memória, já deve valer assim que o deploy
+publicar.
+
+**Ainda fora de escopo, sem mudança**: a separação nunca-contados/"Estoque não validado" vs.
+"validado" contra a meta de 95%, o indicador de recorrência entre documentos diferentes, e
+o layout de 4 seções do pedido original de auditoria — nenhum dos três foi pedido nesta
+rodada ("sim, alinhe" só cobriu a dedup), continuam aguardando uma decisão futura do
+cliente.
