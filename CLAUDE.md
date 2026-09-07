@@ -22538,3 +22538,125 @@ Rigor extra de propósito nesta feature (toca virtualmente toda tela do app de u
 ponta a ponta em produção (a troca de tema de verdade, em cada tela real do app, com
 sessão autenticada) fica a cargo do cliente** — mesma limitação de sempre (login exige
 Supabase Auth real, não simulável no sandbox sem rede).
+
+## "Acuracidade Mensal — Itens Recorrentes": clicar numa barra abre o detalhamento
+
+Cliente pediu, na sequência das rodadas anteriores da página "Acuracidade" (o indicador
+mensal restrito a itens com 2+ documentos de contagem — ver "Indicador de acuracidade em
+'Acuracidade' vira mensal..." mais acima): clicar num mês do gráfico
+("Acuracidade Mensal — Itens Recorrentes (%)") deve abrir um detalhamento listando
+exatamente quais itens entraram no cálculo daquele mês — por item: código, descrição,
+quantidade de documentos de contagem, data da 1ª contagem, data da 2ª contagem, a última
+contagem considerada (com o resultado — Sistema→Físico e a diferença), se houve
+divergência, se foi considerado acurado/não acurado, e o motivo da divergência quando
+disponível — com destaque visual pra 🟢 itens acurados, 🔴 itens com divergência, itens
+com recorrência de divergência, e itens que melhoraram/pioraram em relação à contagem
+anterior.
+
+**Restrição crítica, repetida pelo cliente com ênfase e citada aqui literalmente, porque
+é a regra que rege toda a implementação**: "A lista precisa respeitar exatamente os
+mesmos critérios utilizados no cálculo do indicador. Não quero uma consulta diferente do
+gráfico. O conjunto de itens exibido no detalhamento deve ser exatamente o conjunto
+utilizado para calcular aquele mês." — e, sobre UX: "Não quero transformar o gráfico em
+uma tabela enorme. Mantenha o gráfico atual limpo e executivo."
+
+Duas decisões de design já confirmadas com o cliente antes de qualquer linha de código
+(via `AskUserQuestion`, numa rodada anterior desta mesma funcionalidade): (a) o
+detalhamento mostra as DUAS métricas lado a lado, cada uma rotulada com clareza — a
+média contínua por documento (a mesma conta da barra do gráfico) E uma contagem binária
+simples "N acurados / M divergentes" — nunca forçando as duas a "bater", já que são
+perguntas diferentes; (b) o detalhamento abre como **Modal** (não navegação/gaveta/tela
+nova), reaproveitando os mesmos padrões visuais já estabelecidos no app
+(`.rank-table`/`StatusTag`).
+
+### Como a garantia "mesmo conjunto do gráfico" foi cumprida — sem consulta separada
+
+`computeAcuracidadeItensRecorrentes(pool, dataInicioStr, dataFimStr)` (a MESMA função que
+já calculava o gráfico, sem nenhuma duplicação) foi reescrita pra, no mesmo laço que já
+monta `monthlyStats`, também gravar metadado por documento (sem nunca mutar o objeto
+`c` original) numa `Map` — `totalDocumentos`/`dataPrimeiraContagem`/
+`dataSegundaContagem`/`recorrenciaDivergencia` (2+ divergências no histórico completo do
+código, não só no mês)/`evolucao` (comparado contra o documento ANTERIOR do mesmo
+código, nunca contra "hoje") — e devolve um campo novo, `documentosPorMes` (um objeto
+`{[chaveDoMes]: [itens...]}`), montado filtrando `elegiveis` (a MESMA lista que já
+alimentava `computeMonthlyStats`) pelas chaves de mês que **de fato aparecem no eixo do
+gráfico** (`chavesDoGrafico`, um `Set` das chaves de `monthlyStats`) — nunca vaza um
+documento de um mês fora da janela do gráfico pro detalhamento, e nunca inclui um
+documento que o gráfico não usou. Como é literalmente o MESMO laço/pool que gera as
+barras, não existe risco de "consulta diferente do gráfico" — é a mesma consulta, só
+devolvendo mais um formato do resultado.
+- **`compararEvolucaoAcuracidade(accAntes, accDepois)`** (função nova, extraída) —
+  reaproveita a MESMA tolerância de ruído de ponto flutuante já usada em
+  `computeEfeitoAjustes` (diferença >0.001 pra não confundir "manteve" com "melhorou"/
+  "piorou" por arredondamento), só aplicada aqui contra o documento anterior do MESMO
+  código (não contra "a próxima contagem depois de um ajuste aprovado", que é o que
+  `computeEfeitoAjustes` compara) — mesma fórmula, uso diferente, por isso virou função
+  própria em vez de duplicar a lógica inline nos dois lugares.
+- **Regra "elegibilidade sobre o histórico inteiro, não só a janela do gráfico"
+  preservada** — um código com 2+ documentos no total continua elegível mesmo que só 1
+  deles caia dentro do período escolhido no painel "Filtros"; o item nunca "some" da
+  base de cálculo por causa do filtro de data, exatamente como a regra fundamental já
+  confirmada nas rodadas anteriores desta página.
+
+### `AcuracidadeMesDetalheModal({mes, itens, onClose})` — novo componente
+
+Mesmo padrão visual de modal já usado no app (`.modal-backdrop`/`.modal-box`, clique no
+X ou fora do card fecha, clique dentro nunca propaga via `stopPropagation`) — ganhou uma
+variante de largura só pra esta tela (`.modal-box-wide{max-width:1040px;}`, CSS novo,
+aditiva, nunca muda o padrão de 640px que `AdicionarEtpModal` já usava — a tabela de 8
+colunas deste detalhamento precisava de mais espaço sem espremer).
+
+- **2 cards no topo** (`.ops-kpi-row`/`.ops-kpi-card`, mesma família de CSS já
+  reaproveitada por "Indicadores"/"Acuracidade" — nenhuma classe nova além da largura do
+  modal): "Acuracidade Média do Mês (gráfico)" — o mesmo `%` que já está na barra
+  clicada — e "Itens Acurados × Divergentes (contagem simples)" — `N / M`, com um
+  subtítulo explícito ("...— métrica diferente da acima, sem forçar bater") — cumpre a
+  decisão já confirmada de mostrar as duas métricas lado a lado, cada uma rotulada.
+- **Tabela `.rank-table`** (mesmo componente visual já usado noutras telas de auditoria
+  deste projeto, ex. "Top 5 Maiores Divergências"): uma linha por documento, ordenada
+  primeiro por resultado (divergente → sem dado → acurado, o que precisa de atenção
+  primeiro) e depois por data — colunas Produto (código+descrição)/Contagem
+  considerada (data+hora)/Sistema→Físico (Δ, colorido verde/vermelho)/Documentos (total
+  + data da 1ª/2ª contagem)/Resultado (`StatusTag` ok/danger/warn — Acurado/Divergente/
+  Sem dado — os "🟢"/"🔴" pedidos, via o mesmo componente de status já usado em toda
+  outra tela do app)/Recorrência (chip vermelho "Recorrente" só quando o histórico
+  completo do item já teve 2+ divergências, `—` senão)/Evolução (ícone+texto colorido
+  Melhorou/Piorou/Manteve, comparado contra o documento anterior — `—` no 1º documento
+  de cada item, que não tem "anterior" pra comparar)/Motivo (texto livre já gravado na
+  contagem, ou `—`).
+- **`AcuracidadePanel`**: `MonthlyAccuracyBarChart` ganhou a prop `onMonthClick`
+  (opcional — sem ela, o gráfico se comporta exatamente como antes, nenhuma regressão
+  no uso já existente em "Indicadores"); cada `<g>` de mês só fica clicável
+  (`cursor:pointer`) quando `onMonthClick` existe **e** o mês tem pelo menos 1
+  documento (`m.total>0`) — mês vazio nunca abre um modal sem conteúdo. Estado novo
+  `mesSelecionado` guarda só a CHAVE do mês (nunca o objeto inteiro), garantindo que o
+  modal sempre lê o dado mais fresco de `acuracidadeRecorrentes` a cada render, em vez
+  de um snapshot que poderia ficar desatualizado se o painel "Filtros" mudasse de
+  período com o modal ainda montado.
+- **Nenhuma mudança no gráfico em si além de ficar clicável** — nenhuma coluna nova,
+  nenhum rótulo a mais, nenhuma legenda extra — cumpre "não quero transformar o gráfico
+  em uma tabela enorme, mantenha o gráfico atual limpo e executivo": toda a informação
+  detalhada só existe dentro do modal, sob demanda.
+
+### Verificação
+
+Testado via harness dedicado (jsdom + react-dom/client + `act()`, mesma técnica
+rigorosa de sempre — extrai o `<script type="text/babel">` inteiro do `index.html`,
+transpila via Babel, roda numa `vm`): 61 asserções em 3 partes — Part 0 (lógica pura de
+`computeAcuracidadeItensRecorrentes`, fidelidade de `documentosPorMes` contra
+`monthlyStats`/elegibilidade); Part 1 (`AcuracidadePanel` renderizado de ponta a ponta —
+clicar numa barra com documento abre o modal com os itens certos, `X`/clique fora
+fecham, clique dentro do card não propaga, mês vazio nunca é clicável); Part 2
+(`AcuracidadeMesDetalheModal` isolado, cobrindo os ramos `sem_dado`/`piorou`/`manteve`
+que o cenário de clique da Part 1 não alcança naturalmente). Rodei de novo toda a
+suíte de regressão do scratchpad (mais 5 arquivos — `verify_acuracidade_itens_
+recorrentes.js`/`verify_armazem_ambiguo.js`/`verify_monthly_chart_colorbymeta.js`/
+`harness_dark_mode.js`/`check.js`) — 0 falhas, incluindo a confirmação de que
+`MonthlyAccuracyBarChart` continua 100% igual quando usado sem `onMonthClick` (o uso já
+existente em "Indicadores", que não pediu essa interação). Transpile Babel do arquivo
+inteiro e balanceamento de chaves do CSS conferidos (688/688, +1 pela única regra CSS
+nova, `.modal-box-wide`). **Nenhuma migração de SQL nem redeploy de Edge Function
+necessários** — é cálculo 100% em memória sobre dado já carregado, publica sozinho via
+GitHub Pages assim que o deploy processar. **Verificação visual/funcional de ponta a
+ponta em produção fica a cargo do cliente** — mesma limitação de sempre (login exige
+Supabase Auth real, não simulável no sandbox sem rede).

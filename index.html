@@ -1435,6 +1435,11 @@
      (o mais alto até aqui era .mobile-nav-bar, em 120). */
   .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;}
   .modal-box{background:var(--panel);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);max-width:640px;width:100%;max-height:88vh;overflow-y:auto;padding:22px;}
+  /* Variante mais larga do .modal-box acima — aditiva, nunca muda o padrão de
+     640px usado por AdicionarEtpModal. Só pro drill-down de "Acuracidade
+     Mensal — Itens Recorrentes" (AcuracidadeMesDetalheModal), que precisa de
+     espaço pra uma tabela de 7-8 colunas sem espremer. */
+  .modal-box-wide{max-width:1040px;}
   .modal-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;}
   .modal-title{font-size:var(--text-lg);font-weight:700;color:var(--ink);}
   .modal-subtitle{font-size:var(--text-xs);color:var(--ink-dim);margin-top:4px;line-height:1.5;}
@@ -14347,6 +14352,26 @@ function computeMonthlyStats(counts, dataInicioStr, dataFimStr){
 // Cada mês é atribuído pelo campo `.data` do PRÓPRIO documento de contagem
 // (via `computeMonthlyStats`/`getMonthInfo`) — nunca uma data de cadastro/
 // atualização de outra natureza.
+// Mesma tolerância/critério já usado por `computeEfeitoAjustes` (evita
+// "piorou"/"melhorou" por ruído de ponto flutuante) — extraído aqui como
+// função nomeada só porque `computeAcuracidadeItensRecorrentes` também
+// precisa dessa comparação (contra o documento anterior do MESMO código, não
+// contra "a próxima contagem depois de um ajuste" como em
+// `computeEfeitoAjustes` — mesma fórmula, uso diferente).
+function compararEvolucaoAcuracidade(accAntes, accDepois){
+  if(accAntes==null || accDepois==null) return 'sem_dado';
+  const diff = accDepois - accAntes;
+  return diff>0.001 ? 'melhorou' : diff<-0.001 ? 'piorou' : 'manteve';
+}
+
+// `documentosPorMes` (abaixo) existe pra alimentar o detalhamento por clique
+// num mês do gráfico — pedido explícito do cliente: "A lista precisa
+// respeitar exatamente os mesmos critérios utilizados no cálculo do
+// indicador... O conjunto de itens exibido no detalhamento deve ser
+// exatamente o conjunto utilizado para calcular aquele mês." Por isso
+// `documentosPorMes` é construído a partir do MESMO array `elegiveis` (nunca
+// uma consulta/filtro separado) e só inclui meses que já existem em
+// `monthlyStats` — nunca um mês "extra" que o gráfico não mostraria.
 function computeAcuracidadeItensRecorrentes(pool, dataInicioStr, dataFimStr){
   const porCodigo = {};
   pool.forEach(c=>{
@@ -14355,17 +14380,60 @@ function computeAcuracidadeItensRecorrentes(pool, dataInicioStr, dataFimStr){
   });
   const elegiveis = [];
   let codigosElegiveis = 0;
+  const metaPorDocumento = new Map(); // dados derivados por documento, nunca muta `c`
   Object.values(porCodigo).forEach(arr=>{
     if(arr.length < 2) return; // regra fundamental: só itens com 2+ documentos
+    arr.sort((a,b)=> (a.data||'').localeCompare(b.data||'') || (a.hora||'').localeCompare(b.hora||''));
     codigosElegiveis++;
-    arr.forEach(c=>elegiveis.push(c));
+    // "recorrência de divergência" é sobre o HISTÓRICO INTEIRO do código
+    // (mesmo critério de elegibilidade — nunca recortado pelo período do
+    // gráfico), não só o que cai dentro do mês clicado.
+    const divergenciasNoHistorico = arr.filter(c=>c.diferenca!=null && c.diferenca!==0).length;
+    arr.forEach((c,idx)=>{
+      elegiveis.push(c);
+      // guardado fora do objeto `c` original (nunca muta a contagem real) —
+      // um Map por referência de objeto, consultado só na hora de montar
+      // `documentosPorMes` abaixo.
+      metaPorDocumento.set(c, {
+        totalDocumentos: arr.length,
+        dataPrimeiraContagem: arr[0].data,
+        dataSegundaContagem: arr[1] ? arr[1].data : null,
+        recorrenciaDivergencia: divergenciasNoHistorico >= 2,
+        evolucao: idx===0 ? null : compararEvolucaoAcuracidade(itemAcuracidade(arr[idx-1]), itemAcuracidade(c)),
+      });
+    });
   });
   const monthlyStats = computeMonthlyStats(elegiveis, dataInicioStr, dataFimStr);
   const mesesComDado = monthlyStats.filter(m=>m.acuracidade!=null);
   const acuracidadeMedia = mesesComDado.length>0
     ? mesesComDado.reduce((s,m)=>s+m.acuracidade,0)/mesesComDado.length
     : null;
-  return { monthlyStats, codigosElegiveis, totalDocumentos: elegiveis.length, acuracidadeMedia };
+  const chavesDoGrafico = new Set(monthlyStats.map(m=>m.key));
+  const documentosPorMes = {};
+  elegiveis.forEach(c=>{
+    const {key} = getMonthInfo(c.data);
+    if(!chavesDoGrafico.has(key)) return; // nunca um mês que o gráfico não mostraria
+    const meta = metaPorDocumento.get(c) || {};
+    const acc = itemAcuracidade(c);
+    (documentosPorMes[key] = documentosPorMes[key] || []).push({
+      productCode: c.productCode,
+      descricao: c.descricao || c.productCode,
+      data: c.data,
+      hora: c.hora || null,
+      qtdContada: c.qtdContada,
+      saldoSistema: c.saldoSistema,
+      diferenca: c.diferenca,
+      motivo: c.motivo || null,
+      acuracidade: acc,
+      resultado: c.diferenca==null ? 'sem_dado' : (c.diferenca===0 ? 'acurado' : 'divergente'),
+      totalDocumentos: meta.totalDocumentos,
+      dataPrimeiraContagem: meta.dataPrimeiraContagem,
+      dataSegundaContagem: meta.dataSegundaContagem,
+      recorrenciaDivergencia: !!meta.recorrenciaDivergencia,
+      evolucao: meta.evolucao || null,
+    });
+  });
+  return { monthlyStats, codigosElegiveis, totalDocumentos: elegiveis.length, acuracidadeMedia, documentosPorMes };
 }
 
 // Pool "Tendência" — TODA contagem/rodada registrada (inclui item ainda
@@ -14651,7 +14719,7 @@ function WeeklyCountChart({weeks, meta=META_CONTAGENS_SEMANAL}){
 // 34) porque as colunas costumam bater perto de 100%, e o rótulo do valor
 // fica ACIMA da barra — precisa de mais respiro entre o topo do SVG e a
 // grade de "100%" pra não ficar espremido.
-function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL, colorByMeta=false}){
+function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL, colorByMeta=false, onMonthClick=null}){
   const W = 760, H = 220, padL = 34, padR = 30, padT = 38, padB = 40;
   const chartW = W - padL - padR, chartH = H - padT - padB;
   const n = months.length;
@@ -14671,7 +14739,10 @@ function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL, colorBy
         <title>Meta: {meta}%</title>
       </line>
       {months.map((m,i)=>(
-        <g key={m.key}>
+        <g key={m.key}
+          onClick={onMonthClick && m.total>0 ? ()=>onMonthClick(m) : undefined}
+          style={onMonthClick && m.total>0 ? {cursor:'pointer'} : undefined}
+        >
           {m.acuracidade!=null ? (
             <>
               <rect x={x(i)-barW/2} y={y(m.acuracidade)} width={barW} height={Math.max(0, y(0)-y(m.acuracidade))} rx={4} fill={colorByMeta && m.acuracidade>=meta ? 'var(--ok)' : WEEKLY_CHART_COLOR}>
@@ -15510,8 +15581,161 @@ function Dashboard({counts, inventories, historicoConcluidas=[], historicoParaTe
 // (`usePersistedState('acuracidadeTrendFilter', ...)`, chave diferente de
 // `'dashboardTrendFilter'`) — as duas páginas guardam a própria escolha de
 // período sem interferir uma na outra.
+
+// Drill-down modal de "Acuracidade Mensal — Itens Recorrentes": abre ao
+// clicar numa barra do gráfico em `AcuracidadePanel`, mostrando EXATAMENTE
+// os documentos que entraram no cálculo daquele mês — pedido explícito do
+// cliente: "A lista precisa respeitar exatamente os mesmos critérios
+// utilizados no cálculo do indicador... O conjunto de itens exibido no
+// detalhamento deve ser exatamente o conjunto utilizado para calcular
+// aquele mês." Por isso `itens` sempre vem de
+// `acuracidadeRecorrentes.documentosPorMes[mes.key]` (nunca uma consulta/
+// filtro próprio) — o mesmo array que `computeAcuracidadeItensRecorrentes`
+// já usou pra alimentar `monthlyStats`, sem recalcular nada aqui.
+//
+// O cabeçalho mostra DUAS métricas, rotuladas como distintas — decisão já
+// confirmada com o cliente via `AskUserQuestion` ("Mostrar as duas
+// métricas, rotuladas como distintas"): a média contínua que o gráfico já
+// mostra (`mes.acuracidade`, cada documento pesando pela nota 0-100% de
+// `itemAcuracidade`) e uma contagem BINÁRIA simples (N acurados/M com
+// divergência), calculada aqui a partir do MESMO array `itens` — nunca uma
+// consulta separada — e as duas nunca são forçadas a "bater" uma com a
+// outra (são métricas diferentes de propósito).
+function AcuracidadeMesDetalheModal({mes, itens, onClose}){
+  if(!mes) return null;
+
+  const acurados = itens.filter(it=>it.resultado==='acurado').length;
+  const divergentes = itens.filter(it=>it.resultado==='divergente').length;
+  const semDado = itens.filter(it=>it.resultado==='sem_dado').length;
+
+  // Divergentes primeiro (o que mais interessa pra entender "por que caiu"),
+  // depois sem dado, depois acurados — dentro do mesmo grupo, mais antigo
+  // primeiro (ordem cronológica de leitura).
+  const ORDEM_RESULTADO = {divergente:0, sem_dado:1, acurado:2};
+  const itensOrdenados = [...itens].sort((a,b)=>{
+    const d = (ORDEM_RESULTADO[a.resultado] ?? 3) - (ORDEM_RESULTADO[b.resultado] ?? 3);
+    if(d!==0) return d;
+    return (a.data||'').localeCompare(b.data||'') || (a.hora||'').localeCompare(b.hora||'');
+  });
+
+  // Mesmo padrão de ícone trendingUp/trendingDown/minus já usado noutro
+  // lugar do app pra "subiu/desceu/estável" (ver perto de `KpiTrend`).
+  const EVOLUCAO_ICON = {melhorou:'trendingUp', piorou:'trendingDown', manteve:'minus'};
+  const EVOLUCAO_COR = {melhorou:'var(--ok)', piorou:'var(--danger)', manteve:'var(--ink-dim)'};
+  const EVOLUCAO_LABEL = {melhorou:'Melhorou', piorou:'Piorou', manteve:'Manteve'};
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box modal-box-wide" onClick={e=>e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title">{mes.label} de {mes.sublabel}</div>
+            <div className="modal-subtitle">
+              Todos os documentos de contagem usados pra calcular a acuracidade deste mês —
+              exatamente o mesmo conjunto que gerou a barra do gráfico, sem nenhuma consulta
+              separada.
+            </div>
+          </div>
+          <button type="button" className="modal-close-btn" onClick={onClose}><DIcon name="x" size={18} /></button>
+        </div>
+
+        <div className="ops-kpi-row ops-kpi-row-auto" style={{marginBottom:18}}>
+          <div className="ops-kpi-card">
+            <div className="ops-kpi-head">
+              <span className="ops-kpi-label">Acuracidade Média do Mês (gráfico)</span>
+            </div>
+            <div className="ops-kpi-value">{mes.acuracidade==null ? '—' : mes.acuracidade.toFixed(1)+'%'}</div>
+            <div className="ops-kpi-meta">média contínua por documento — a mesma métrica da barra ao lado</div>
+          </div>
+          <div className="ops-kpi-card">
+            <div className="ops-kpi-head">
+              <span className="ops-kpi-label">Itens Acurados × Divergentes (contagem simples)</span>
+            </div>
+            <div className="ops-kpi-value">{acurados} <span style={{color:'var(--ink-dim)',fontWeight:400,fontSize:'var(--text-md)'}}>/</span> {divergentes}</div>
+            <div className="ops-kpi-meta">
+              {acurados} acurado(s), {divergentes} com divergência{semDado>0 ? (', '+semDado+' sem dado pra comparar') : ''} — métrica diferente da acima, sem forçar bater
+            </div>
+          </div>
+        </div>
+
+        {itens.length===0 ? (
+          <div style={{color:'var(--ink-dim)',fontSize:'var(--text-sm)'}}>Nenhum documento neste mês.</div>
+        ) : (
+          <div style={{overflowX:'auto'}}>
+            <table className="rank-table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Contagem considerada</th>
+                  <th className="num">Sistema → Físico (Δ)</th>
+                  <th>Documentos</th>
+                  <th>Resultado</th>
+                  <th>Recorrência</th>
+                  <th>Evolução</th>
+                  <th>Motivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itensOrdenados.map((it,idx)=>(
+                  <tr key={it.productCode+'-'+it.data+'-'+idx}>
+                    <td>
+                      <div style={{fontSize:'var(--text-xs)',fontWeight:700,color:'var(--ink-dim)'}}>{reconstructNumericCode(it.productCode)}</div>
+                      <div>{it.descricao}</div>
+                    </td>
+                    <td>{fmtDataBR(it.data)}{it.hora ? (' '+it.hora) : ''}</td>
+                    <td className="num">
+                      {it.saldoSistema==null ? '—' : it.saldoSistema}
+                      {' → '}
+                      {it.qtdContada==null ? '—' : it.qtdContada}
+                      {it.diferenca!=null && (
+                        <div style={{fontSize:'var(--text-xs)',color: it.diferenca===0 ? 'var(--ok)' : 'var(--danger)'}}>
+                          Δ {it.diferenca>0?'+':''}{it.diferenca}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {it.totalDocumentos}
+                      <div style={{fontSize:'var(--text-xs)',color:'var(--ink-dim)'}}>
+                        1ª: {fmtDataBR(it.dataPrimeiraContagem)}{it.dataSegundaContagem ? (' · 2ª: '+fmtDataBR(it.dataSegundaContagem)) : ''}
+                      </div>
+                    </td>
+                    <td>
+                      {it.resultado==='acurado' && <StatusTag status="ok" text="Acurado" />}
+                      {it.resultado==='divergente' && <StatusTag status="danger" text="Divergente" />}
+                      {it.resultado==='sem_dado' && <StatusTag status="warn" text="Sem dado" />}
+                    </td>
+                    <td>
+                      {it.recorrenciaDivergencia
+                        ? <span className="category-chip" style={{background:'var(--danger-bg)',color:'var(--danger)'}}>Recorrente</span>
+                        : <span style={{color:'var(--ink-dim)'}}>—</span>}
+                    </td>
+                    <td>
+                      {it.evolucao && EVOLUCAO_ICON[it.evolucao] ? (
+                        <span style={{display:'inline-flex',alignItems:'center',gap:5,color:EVOLUCAO_COR[it.evolucao]}}>
+                          <DIcon name={EVOLUCAO_ICON[it.evolucao]} size={14} /> {EVOLUCAO_LABEL[it.evolucao]}
+                        </span>
+                      ) : <span style={{color:'var(--ink-dim)'}}>—</span>}
+                    </td>
+                    <td>{it.motivo || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AcuracidadePanel({counts, historicoConcluidas=[], historicoParaTendencia=[]}){
   const [trendFilter, setTrendFilter] = usePersistedState('acuracidadeTrendFilter', {tipo:'30d', from:'', to:''});
+  // Mês selecionado no gráfico "Acuracidade Mensal — Itens Recorrentes" pra
+  // abrir o drill-down (`AcuracidadeMesDetalheModal`) — guarda só a `key`
+  // ('YYYY-MM'), nunca o objeto do mês em si, pra sempre reler o dado mais
+  // atual de `acuracidadeRecorrentes` (que pode mudar se `counts` mudar
+  // enquanto o modal está aberto, ex. via Realtime).
+  const [mesSelecionado, setMesSelecionado] = useState(null);
 
   const historicoComoContagem = historicoConcluidas.map(historicoRowToCountLike).filter(Boolean);
   // Mesmo dedup por documento já usado em Indicadores/Home — só a rodada
@@ -15588,8 +15812,14 @@ function AcuracidadePanel({counts, historicoConcluidas=[], historicoParaTendenci
           pelo menos uma vez) — item contado só 1 vez fica de fora, não é fabricado como 100%/0%.
           Cada mês usa a data do próprio documento de contagem.
         </div>
-        <MonthlyAccuracyBarChart months={acuracidadeRecorrentes.monthlyStats} meta={META_ACURACIDADE_SEMANAL} colorByMeta={true} />
+        <MonthlyAccuracyBarChart months={acuracidadeRecorrentes.monthlyStats} meta={META_ACURACIDADE_SEMANAL} colorByMeta={true} onMonthClick={(m)=>setMesSelecionado(m.key)} />
       </div>
+
+      <AcuracidadeMesDetalheModal
+        mes={mesSelecionado ? acuracidadeRecorrentes.monthlyStats.find(m=>m.key===mesSelecionado) : null}
+        itens={mesSelecionado ? (acuracidadeRecorrentes.documentosPorMes[mesSelecionado] || []) : []}
+        onClose={()=>setMesSelecionado(null)}
+      />
 
       <TrendFilterBar
         trendFilter={trendFilter}
