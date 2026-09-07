@@ -74,6 +74,7 @@
     --ink-dim: #575756;
     --safety: #F6A200;
     --safety-ink: #14161A;
+    --safety-bg: #FFF4E0;
     --ok: #1E8E4F;
     --ok-bg: #E3F6EA;
     --warn: #A35F00;
@@ -114,19 +115,37 @@
      aparelho (botão sol/lua no topbar/menu do usuário, salva no
      localStorage via usePersistedState — nunca sincroniza entre aparelhos,
      mesmo critério já usado pra sidebarCollapsed, é preferência de UI, não
-     configuração administrável). Só redefine os tokens do sistema
+     configuração administrável). Redefine os tokens do sistema
      "tablet/operador" (--bg/--panel/--ink/etc — usados via var() em quase
      todo o app graças às rodadas de padronização de cor documentadas no
-     CLAUDE.md) — --navy/--gray-*/--font-corp (a paleta da tela de LOGIN)
-     ficam intocados de propósito: o login tem um design pixel-perfect já
-     aprovado pelo cliente por imagem de referência específica, então
-     continua sempre claro, com ou sem tema escuro ativo no resto do app —
-     o botão de alternar nem aparece lá (só existe depois de logado). O
-     restante do sistema "corp" (Sidebar/DesktopTopbar/Dashboard) usa
-     --navy/--gray-* só pra borda/texto — os fundos brancos literais desses
-     componentes (cards de KPI, menus suspensos, etc.) ganham overrides
-     pontuais mais abaixo, reaproveitando os MESMOS tokens redefinidos
-     aqui (--panel/--line/--ink-dim), nunca uma paleta escura à parte. */
+     CLAUDE.md) E TAMBÉM --navy/--gray-* — achado real ao levantar o escopo:
+     esses dois últimos não são "só da tela de login", são o sistema de
+     cor de TEXTO/BORDA de quase toda a área corporativa (Sidebar,
+     DesktopTopbar, Dashboard/Indicadores, Acuracidade, menu do usuário,
+     cards de KPI etc. — ~100 usos espalhados). Deixá-los intocados
+     deixaria texto navy escuro sobre painel escuro, ilegível. Resolvido em
+     3 partes:
+     1) Redefinidos aqui embaixo pro papel de TEXTO/BORDA em tema escuro
+        (mesmo padrão já usado por --ink/--ink-dim/--line): --navy vira um
+        tom claro (texto principal), --gray-500/400 tons médios (texto
+        secundário), --gray-200/100/50 tons escuros (borda/fundo sutil) —
+        um efeito só corrige as ~100 ocorrências de uma vez, sem precisar
+        tocar em cada seletor.
+     2) A tela de LOGIN (.login-page) tem um design pixel-perfect já
+        aprovado pelo cliente por imagem de referência específica — precisa
+        continuar sempre com a paleta clara original, mesmo se o tema
+        escuro estiver ativo (ela só aparece ANTES do login, mas o valor
+        salvo já pode estar em "dark" de uma sessão anterior). Por isso os
+        mesmos 6 tokens são re-fixados pro valor claro original, escopados
+        só a essa tela, logo abaixo do bloco :root[data-theme="dark"] — a
+        cascata de CSS var() garante que esse re-pin vence dentro da
+        subárvore de .login-page, sem precisar de nenhuma lógica em JS.
+     3) --navy também é usado como FUNDO (não texto) em 3 lugares — a
+        própria Sidebar/.mobile-nav-bar e o anel decorativo do divisor da
+        marca — sempre escuros por design em qualquer tema (documentado
+        desde que a Sidebar existe). Pra não ficarem craqueados pela
+        redefinição do item 1, essas 3 regras passam a usar o hex literal
+        #0F172A direto, em vez de var(--navy) — ver comentário em cada uma. */
   :root[data-theme="dark"]{
     --bg: #14161B;
     /* Mesma relação de elevação do tema claro (lá --panel:#FFFFFF é o tom
@@ -146,6 +165,14 @@
     --warn-bg: #3A2A0A;
     --danger: #F87171;
     --danger-bg: #3A1512;
+    /* --safety (laranja da marca) e --safety-ink (texto quase-preto) NÃO são
+       redefinidos aqui de propósito — igual à Sidebar, um "chip"/botão sólido
+       na cor da marca (ex. .btn-primary, .count-card-address-badge) deve ficar
+       IGUAL nos dois temas, nunca escurecer. --safety-bg (tingimento pálido do
+       laranja, usado só como FUNDO por trás de --ink normal, nunca por trás de
+       --safety-ink) já pode escurecer com segurança — ver comentário em cada
+       regra que a usa. */
+    --safety-bg: #3D2A0C;
     --accent2: #5AA9E6;
     --purple: #B18AF0;
     --purple-bg: #2A2140;
@@ -153,8 +180,37 @@
     --teal-bg: #123330;
     --blue: #6FA8F5;
     --blue-bg: #152A42;
+    /* --navy/--gray-* redefinidos pro papel de texto/borda da área
+       corporativa (Sidebar/DesktopTopbar/Dashboard/Acuracidade) — ver
+       comentário acima. Mesma relação de contraste do tema claro, invertida:
+       --navy (texto principal, era quase preto) vira quase branco;
+       --gray-500/400 (texto secundário) viram cinza-claro médio;
+       --gray-200/100/50 (fundo/borda sutil, eram bem claros) viram tons
+       escuros próximos de --panel-raised/--line. */
+    --navy: #EDEEF2;
+    --gray-50: #1A1D24;
+    --gray-100: #20242C;
+    --gray-200: #383D48;
+    --gray-400: #9AA0AC;
+    --gray-500: #B7BCC6;
+  }
+  /* Re-fixa a paleta corporativa pro valor claro original, só dentro da
+     tela de login — ver item 2 do comentário acima. */
+  :root[data-theme="dark"] .login-page{
+    --navy: #0F172A;
+    --gray-50: #F8FAFC;
+    --gray-100: #F1F5F9;
+    --gray-200: #E2E8F0;
+    --gray-400: #94A3B8;
+    --gray-500: #64748B;
   }
   *{box-sizing:border-box;}
+  /* Transição suave ao trocar Claro/Escuro — só propriedades de cor (nunca
+     largura/altura/transform), pra nunca quebrar layout nem interferir com
+     as transições próprias já existentes em botões/inputs (que continuam
+     valendo, essa regra só cobre o que mais nada já cobria: fundo/texto/
+     borda mudando de valor quando data-theme muda no <html>). */
+  *,*::before,*::after{transition:background-color .2s ease,border-color .2s ease,color .2s ease;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--font-body);height:100%;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}
   #root{min-height:100vh;display:flex;flex-direction:column;}
   button{font-family:inherit;cursor:pointer;}
@@ -282,7 +338,7 @@
   .uf-list-row{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;font-size:var(--text-sm);color:var(--ink);}
   .uf-list-row:last-child{border-bottom:none;}
   .uf-list-row:hover{background:var(--panel-raised);}
-  .uf-list-row.selected{background:#FFF4E0;}
+  .uf-list-row.selected{background:var(--safety-bg);}
   .uf-list-row .uf-row-label{flex:1;}
   .uf-list-row .uf-drag-handle{color:var(--ink-dim);cursor:grab;flex-shrink:0;display:flex;}
   .uf-list-row .uf-remove-btn{flex-shrink:0;width:22px;height:22px;border-radius:8px;border:none;background:transparent;color:var(--ink-dim);display:flex;align-items:center;justify-content:center;cursor:pointer;}
@@ -378,7 +434,7 @@
   .grupo-suggestion-empty{padding:14px;color:var(--ink-dim);font-size:var(--text-sm);}
   .radio-group{display:flex;flex-direction:column;gap:10px;}
   .radio-opt{display:flex;align-items:center;gap:12px;background:var(--panel-raised);border:1px solid var(--line);padding:14px;border-radius:8px;}
-  .radio-opt.active{border-color:var(--safety);background:#FFF4E0;}
+  .radio-opt.active{border-color:var(--safety);background:var(--safety-bg);}
   .radio-opt input{width:20px;height:20px;accent-color:var(--safety);}
   .radio-opt .opt-title{font-weight:600;font-size:var(--text-md);}
   .radio-opt .opt-desc{font-size:var(--text-sm);color:var(--ink-dim);margin-top:2px;}
@@ -467,6 +523,10 @@
      localizar o item fisicamente antes de recontar. */
   .count-card-toprow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
   .count-card-toprow .count-card-title{flex:1;min-width:0;}
+  /* background hardcoded (não var(--safety-bg)) de propósito — o texto aqui é
+     --safety-ink (fixo, quase-preto, nunca redefinido no tema escuro), então o
+     fundo precisa ficar sempre claro pra continuar legível nos dois temas,
+     mesmo raciocínio da Sidebar sempre-escura. */
   .count-card-address-badge{display:flex;align-items:center;gap:6px;flex-shrink:0;font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--safety-ink);background:#FFF3E0;border:1.5px solid var(--safety);border-radius:var(--radius);padding:8px 14px;white-space:nowrap;}
   .count-card-main{display:flex;gap:16px;align-items:stretch;flex:1;}
   .count-card-content{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;justify-content:center;}
@@ -520,7 +580,7 @@
      cinza das células .rg dentro dele, senão painel e célula se fundem
      num bloco só sem nenhum contraste pro texto dos rótulos. */
   .round-panel.previous{background:var(--panel);border:1px solid var(--line);}
-  .round-panel.current{background:#fff;border:2px solid var(--safety);}
+  .round-panel.current{background:var(--panel);border:2px solid var(--safety);}
   .round-eyebrow{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
   .round-eyebrow .label{font-family:var(--font-mono);font-size:var(--text-sm);font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--ink-dim);}
   .round-panel.current .round-eyebrow .label{color:var(--safety-ink);}
@@ -603,7 +663,7 @@
   .cs-material{display:flex;align-items:center;justify-content:space-between;gap:16px;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);padding:20px;}
   .cs-material-info{flex:1;min-width:0;}
   .cs-code{font-family:var(--font-mono);font-size:clamp(30px,6vw,36px);font-weight:700;color:var(--ink);letter-spacing:0.5px;line-height:1;}
-  .cs-scan-btn{flex-shrink:0;width:56px;height:56px;border-radius:14px;border:2px solid var(--safety);background:#FFF3E0;color:var(--safety);display:flex;align-items:center;justify-content:center;}
+  .cs-scan-btn{flex-shrink:0;width:56px;height:56px;border-radius:14px;border:2px solid var(--safety);background:var(--safety-bg);color:var(--safety);display:flex;align-items:center;justify-content:center;}
   .cs-scan-btn:active{background:var(--safety);color:#fff;}
   .cs-desc{font-family:var(--font-display);font-size:22px;font-weight:600;text-transform:uppercase;margin-top:8px;line-height:1.25;}
   .cs-scan-feedback{margin-top:-4px;font-size:var(--text-sm);font-weight:600;border-radius:8px;padding:8px 12px;}
@@ -721,7 +781,7 @@
   .health-sub{font-size:var(--text-sm);font-weight:600;margin-top:1px;}
   .health-desc{font-size:var(--text-sm);color:var(--ink-dim);margin-top:6px;max-width:340px;}
   .health-chart{order:3;}
-  .health-current{background:#fff;border-radius:14px;padding:14px 22px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.06);order:2;}
+  .health-current{background:var(--panel);border-radius:14px;padding:14px 22px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.06);order:2;}
   .health-current-value{font-family:var(--font-display);font-size:26px;font-weight:700;}
   .health-current-label{font-size:var(--text-xs);color:var(--ink-dim);margin-top:2px;white-space:nowrap;}
   @media (min-width:1024px){
@@ -743,7 +803,7 @@
      gráficos de tendência (WEEKLY_CHART_COLOR) — mantém os toggle buttons
      "verde/teal" pedidos alinhados com o resto da seção, em vez de
      introduzir mais uma cor de marca. */
-  .trend-filter-bar{background:#fff;border:1px solid #EAEAEA;border-radius:18px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,.05);margin-bottom:24px;}
+  .trend-filter-bar{background:var(--panel);border:1px solid var(--gray-200);border-radius:18px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,.05);margin-bottom:24px;}
   .tfb-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;}
   .tfb-icon-badge{width:40px;height:40px;border-radius:12px;background:rgba(13,148,136,0.12);color:var(--teal);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
   .tfb-icon-badge svg{margin:auto;}
@@ -764,13 +824,13 @@
   .tfb-period-row{display:flex;flex-direction:column;align-items:flex-start;gap:14px;margin-top:20px;}
   .tfb-period-label{display:flex;align-items:center;gap:6px;font-family:var(--font-corp);font-size:var(--text-sm);font-weight:700;color:var(--ink-dim);text-transform:uppercase;letter-spacing:0.4px;flex-shrink:0;}
   .tfb-quick-buttons{display:flex;flex-wrap:wrap;gap:8px;}
-  .tfb-pill{font-family:var(--font-corp);font-size:var(--text-sm);font-weight:600;color:var(--ink-dim);background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 14px;cursor:pointer;white-space:nowrap;transition:background 0.2s,color 0.2s,border-color 0.2s,box-shadow 0.2s;}
+  .tfb-pill{font-family:var(--font-corp);font-size:var(--text-sm);font-weight:600;color:var(--ink-dim);background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);padding:8px 14px;cursor:pointer;white-space:nowrap;transition:background 0.2s,color 0.2s,border-color 0.2s,box-shadow 0.2s;}
   .tfb-pill:hover:not(.active){background:rgba(13,148,136,0.08);border-color:rgba(13,148,136,0.3);}
   .tfb-pill.active{background:var(--teal);color:#fff;border-color:var(--teal);box-shadow:0 4px 10px rgba(13,148,136,0.3);}
   .tfb-custom-row{display:flex;flex-direction:column;align-items:stretch;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-100);}
   .tfb-date-field{display:flex;flex-direction:column;gap:6px;}
   .tfb-date-field label{font-family:var(--font-corp);font-size:var(--text-xs);font-weight:600;color:var(--ink-dim);}
-  .tfb-date-input-wrap{display:flex;align-items:center;gap:8px;border:1px solid var(--gray-200);border-radius:var(--radius);background:#fff;padding:8px 12px;color:var(--ink-dim);}
+  .tfb-date-input-wrap{display:flex;align-items:center;gap:8px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--panel);padding:8px 12px;color:var(--ink-dim);}
   .tfb-date-input-wrap input{border:none;background:transparent;font-family:var(--font-corp);font-size:var(--text-sm);font-weight:500;color:var(--navy);padding:0;}
   .tfb-date-input-wrap input:focus{outline:none;}
   .spin-icon{animation:tfb-spin 0.8s linear infinite;}
@@ -1047,7 +1107,7 @@
        largura disponível de `.app-main`, sem cap nenhum. */
     .content{padding:32px 40px 48px;width:100%;}
 
-    .sidebar{display:flex;flex-direction:column;width:264px;flex-shrink:0;background:var(--navy);min-height:100vh;position:sticky;top:0;overflow:hidden;transition:width .18s ease;}
+    .sidebar{display:flex;flex-direction:column;width:264px;flex-shrink:0;background:#0F172A;min-height:100vh;position:sticky;top:0;overflow:hidden;transition:width .18s ease;} /* hex literal, não var(--navy) — a Sidebar é sempre escura, em qualquer tema (ver comentário do tema escuro) */
     .sidebar.collapsed{width:0;}
     .sidebar-toggle{display:flex;align-items:center;justify-content:center;position:absolute;top:24px;left:250px;width:28px;height:28px;border-radius:50%;background:var(--accent2);color:#fff;border:2px solid var(--bg);box-shadow:0 2px 6px rgba(0,0,0,0.18);z-index:30;transition:left .18s ease;}
     .sidebar-toggle:hover{background:#195a89;}
@@ -1055,7 +1115,7 @@
     .sidebar-brand{padding:22px 22px 18px;border-bottom:1px solid rgba(255,255,255,0.08);width:264px;flex-shrink:0;box-sizing:border-box;text-align:center;}
     .sidebar-brand img{width:100%;max-width:170px;height:auto;display:block;margin:0 auto;}
     .sidebar-brand-divider{position:relative;height:1px;background:linear-gradient(90deg, transparent, var(--safety) 20%, var(--safety) 80%, transparent);margin:14px auto;width:70%;}
-    .sidebar-brand-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:5px;height:5px;border-radius:50%;background:var(--safety);box-shadow:0 0 0 3px var(--navy);}
+    .sidebar-brand-divider::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:5px;height:5px;border-radius:50%;background:var(--safety);box-shadow:0 0 0 3px #0F172A;}
     .sidebar-brand .product{font-family:var(--font-display);font-size:var(--text-sm);font-weight:600;letter-spacing:0.4px;text-transform:uppercase;color:#fff;}
     .sidebar-nav{padding:14px 12px;display:flex;flex-direction:column;gap:10px;width:264px;flex-shrink:0;box-sizing:border-box;}
     .sidebar-group{display:flex;flex-direction:column;gap:2px;}
@@ -1078,9 +1138,9 @@
     .desktop-topbar-title{font-family:var(--font-corp);font-size:20px;font-weight:700;color:var(--navy);letter-spacing:-0.1px;}
     .desktop-topbar-subtitle{font-family:var(--font-corp);font-size:var(--text-sm);color:var(--gray-500);}
     .desktop-topbar-right{display:flex;align-items:center;gap:14px;}
-    .desktop-bell{width:36px;height:36px;border-radius:8px;border:1px solid var(--gray-200);background:#fff;display:flex;align-items:center;justify-content:center;color:var(--gray-500);flex-shrink:0;}
+    .desktop-bell{width:36px;height:36px;border-radius:8px;border:1px solid var(--gray-200);background:var(--panel);display:flex;align-items:center;justify-content:center;color:var(--gray-500);flex-shrink:0;}
     .desktop-bell:hover{background:var(--gray-50);color:var(--navy);}
-    .desktop-notif-menu{position:absolute;top:60px;right:32px;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);width:240px;padding:16px;z-index:50;font-family:var(--font-corp);font-size:var(--text-sm);color:var(--gray-500);text-align:center;}
+    .desktop-notif-menu{position:absolute;top:60px;right:32px;background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);width:240px;padding:16px;z-index:50;font-family:var(--font-corp);font-size:var(--text-sm);color:var(--gray-500);text-align:center;}
     .desktop-user-wrap{position:relative;}
     .desktop-user{display:flex;align-items:center;gap:10px;background:none;border:none;padding:4px 6px 4px 4px;border-radius:8px;cursor:pointer;font-family:var(--font-corp);}
     .desktop-user:hover{background:var(--gray-50);}
@@ -1088,7 +1148,7 @@
     .desktop-user .info{display:flex;flex-direction:column;line-height:1.3;text-align:left;}
     .desktop-user .info strong{font-size:var(--text-sm);color:var(--navy);}
     .desktop-user .info span{font-size:var(--text-xs);color:var(--gray-500);}
-    .desktop-user-menu{position:absolute;top:56px;right:0;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:210px;padding:8px;z-index:50;font-family:var(--font-corp);}
+    .desktop-user-menu{position:absolute;top:56px;right:0;background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);min-width:210px;padding:8px;z-index:50;font-family:var(--font-corp);}
     .desktop-user-menu .um-head{padding:9px 11px 11px;border-bottom:1px solid var(--gray-100);margin-bottom:6px;}
     .desktop-user-menu .um-head strong{display:block;font-size:var(--text-md);color:var(--navy);}
     .desktop-user-menu .um-head span{font-size:var(--text-xs);color:var(--gray-500);}
@@ -1135,7 +1195,7 @@
        partir do breakpoint de 1360px logo abaixo (6×150px + 5×16px de gap
        ≈ 980px, bem dentro do espaço disponível mesmo com a sidebar). */
     .pnl-kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px;}
-    .pnl-kpi{display:block;width:100%;text-align:left;font:inherit;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03);transition:box-shadow .15s, transform .15s;}
+    .pnl-kpi{display:block;width:100%;text-align:left;font:inherit;background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03);transition:box-shadow .15s, transform .15s;}
     .pnl-kpi:hover{box-shadow:0 6px 16px rgba(15,23,42,.08);transform:translateY(-1px);}
     .pnl-kpi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
     .pnl-kpi-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
@@ -1167,7 +1227,7 @@
        em qualquer largura de tela, sem precisar de nenhum breakpoint extra
        (auto-fit já colapsa sozinho pra menos colunas em tela estreita). */
     .ops-kpi-row.ops-kpi-row-auto{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
-    .ops-kpi-card{background:#fff;border:1px solid var(--gray-200);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03);}
+    .ops-kpi-card{background:var(--panel);border:1px solid var(--gray-200);border-radius:12px;padding:14px 16px;box-shadow:0 1px 2px rgba(15,23,42,.03);}
     .ops-kpi-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;}
     .ops-kpi-label{font-family:var(--font-corp);font-size:var(--text-xs);font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--gray-500);line-height:1.3;}
     .ops-kpi-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
@@ -1195,7 +1255,7 @@
     .pnl-col-4{grid-column:span 4;}
     .pnl-col-5{grid-column:span 5;}
     .pnl-col-7{grid-column:span 7;}
-    .pnl-card{background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;box-shadow:0 1px 2px rgba(15,23,42,.03);}
+    .pnl-card{background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;box-shadow:0 1px 2px rgba(15,23,42,.03);}
 
     .pnl-table{width:100%;border-collapse:collapse;font-size:var(--text-sm);}
     .pnl-table th{text-align:left;font-size:var(--text-xs);text-transform:uppercase;letter-spacing:0.4px;color:var(--gray-500);font-weight:600;padding:0 10px 10px;border-bottom:1px solid var(--gray-200);}
@@ -1203,9 +1263,9 @@
     .pnl-table tr:last-child td{border-bottom:none;}
     .pnl-status{display:inline-flex;align-items:center;gap:6px;font-size:var(--text-xs);font-weight:600;padding:4px 9px;border-radius:20px;white-space:nowrap;}
     .pnl-status .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;}
-    .pnl-status.ok{background:#ECFDF5;color:#15803D;}
-    .pnl-status.warn{background:#FFF7ED;color:#9A5B13;}
-    .pnl-status.danger{background:#FEF2F2;color:#B91C1C;}
+    .pnl-status.ok{background:var(--ok-bg);color:var(--ok);}
+    .pnl-status.warn{background:var(--warn-bg);color:var(--warn);}
+    .pnl-status.danger{background:var(--danger-bg);color:var(--danger);}
 
     .pnl-quick-list{display:flex;flex-direction:column;gap:4px;}
     .pnl-quick-item{display:flex;align-items:center;gap:12px;padding:11px 8px;border-radius:8px;background:none;border:none;text-align:left;width:100%;color:var(--navy);}
@@ -1242,7 +1302,7 @@
        cheio pra uma navegação rápida. */
     @media (max-width:767px){
       .sidebar, .sidebar-backdrop, .sidebar-toggle{display:none;}
-      .mobile-nav-bar{display:flex;position:fixed;bottom:0;left:0;right:0;height:56px;background:var(--navy);z-index:120;box-shadow:0 -2px 10px rgba(0,0,0,.2);}
+      .mobile-nav-bar{display:flex;position:fixed;bottom:0;left:0;right:0;height:56px;background:#0F172A;z-index:120;box-shadow:0 -2px 10px rgba(0,0,0,.2);} /* hex literal, não var(--navy) — sempre escuro, mesmo raciocínio da Sidebar */
       .mnb-btn{flex:1;display:flex;align-items:center;justify-content:center;background:none;border:none;color:#fff;}
       .mnb-btn:active{background:rgba(255,255,255,.08);}
       .mnb-btn:disabled{color:rgba(255,255,255,.3);}
@@ -1265,7 +1325,7 @@
       .mobile-home-menu{display:block;}
       .mhm-group{margin-bottom:20px;}
       .mhm-group-title{font-family:var(--font-mono);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:1px;color:var(--gray-500);padding:0 2px 8px;}
-      .mhm-item{display:flex;align-items:center;gap:14px;width:100%;background:#fff;border:1px solid var(--gray-200);border-radius:var(--radius);padding:16px;margin-bottom:10px;text-align:left;font-family:var(--font-corp);box-shadow:0 1px 2px rgba(15,23,42,.03);position:relative;}
+      .mhm-item{display:flex;align-items:center;gap:14px;width:100%;background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);padding:16px;margin-bottom:10px;text-align:left;font-family:var(--font-corp);box-shadow:0 1px 2px rgba(15,23,42,.03);position:relative;}
       .mhm-item:active{background:var(--gray-50);}
       .mhm-ic{width:38px;height:38px;border-radius:var(--radius);background:var(--gray-100);color:var(--navy);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
       .mhm-label{flex:1;font-size:var(--text-md);font-weight:600;color:var(--navy);}
@@ -4654,7 +4714,7 @@ function classifySeverity4(valorDivergente){
   const v = Math.abs(Number(valorDivergente));
   if(v<=100) return {level:'baixa', label:'Baixa', color:'var(--ok)', bg:'var(--ok-bg)', icon:'✓'};
   if(v<=500) return {level:'media', label:'Média', color:'var(--warn)', bg:'var(--warn-bg)', icon:'—'};
-  if(v<=2000) return {level:'alta', label:'Alta', color:'var(--safety)', bg:'#FFF3E0', icon:'!'};
+  if(v<=2000) return {level:'alta', label:'Alta', color:'var(--safety)', bg:'var(--safety-bg)', icon:'!'};
   return {level:'critica', label:'Crítica', color:'var(--danger)', bg:'var(--danger-bg)', icon:'⚠'};
 }
 // Extrai o valor que `classifySeverity4` deve usar a partir de uma contagem —
@@ -5761,6 +5821,20 @@ function App(){
   function gotoAndCloseSidebar(id, data){
     goto(id, data);
     if(window.innerWidth < 768) setSidebarCollapsed(true);
+  }
+
+  // Modo Escuro — mesmo mecanismo de persistência já usado por todo o resto
+  // do app (usePersistedState), reaproveitado em vez de criar um sistema
+  // novo. Padrão SEMPRE 'light' (o app é claro por decisão de design —
+  // ver "Convenções de design" — dark mode é opt-in do usuário, nunca o
+  // valor de fábrica). `data-theme` no <html> é o que os blocos de CSS
+  // `:root[data-theme="dark"]{...}` já existentes no <style> escutam.
+  const [theme, setTheme] = usePersistedState('theme', 'light');
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+  function toggleTheme(){
+    setTheme(t => t === 'dark' ? 'light' : 'dark');
   }
 
   // Chaves 'inventories_v2'/'counts_v2' (em vez de 'inventories'/'counts') —
@@ -6908,13 +6982,15 @@ function App(){
       <div className="app-main">
       {!COUNT_SCREEN_VIEWS.includes(view) && (
         <>
-          <TopBar user={currentUser} role={role} onHome={()=>goto('home')} onLogout={()=>logout('')} />
+          <TopBar user={currentUser} role={role} onHome={()=>goto('home')} onLogout={()=>logout('')} theme={theme} onToggleTheme={toggleTheme} />
           <DesktopTopbar
             view={view}
             user={currentUser}
             role={role}
             onLogout={()=>logout('')}
             subtitle={VIEW_SUBTITLES[view]}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         </>
       )}
@@ -7118,6 +7194,9 @@ const DICON_PATHS = {
   // Ícone do item de menu "Programação" (Gestão de Separação) — lista
   // numerada/ordenada, representando a sequência de separação.
   listOrdered: <><path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></>,
+  // Sol/lua — botão de alternar Modo Escuro (TopBar mobile/DesktopTopbar).
+  sun: <><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4"/><path d="M12 19.1v2.4"/><path d="M4.2 4.2l1.7 1.7"/><path d="M18.1 18.1l1.7 1.7"/><path d="M2.5 12h2.4"/><path d="M19.1 12h2.4"/><path d="M4.2 19.8l1.7-1.7"/><path d="M18.1 5.9l1.7-1.7"/></>,
+  moon: <path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a7 7 0 0 0 11 11Z"/>,
 };
 
 function DIcon({name, size=18, strokeWidth=1.8, style}){
@@ -7482,7 +7561,7 @@ function primeiraTelaAcessivel(user){
   return encontrada ? encontrada.id : 'home';
 }
 
-function TopBar({user, role, onHome, onLogout}){
+function TopBar({user, role, onHome, onLogout, theme, onToggleTheme}){
   return (
     <div className="topbar mobile-topbar">
       <div className="brand" onClick={onHome} style={{cursor:'pointer'}}>
@@ -7494,6 +7573,11 @@ function TopBar({user, role, onHome, onLogout}){
           <Ic>👤</Ic>
           <span>{user.nome} · {ROLE_LABELS[role]}</span>
         </div>
+        {onToggleTheme && (
+          <button className="logout-btn" onClick={onToggleTheme} title={theme==='dark' ? 'Modo Claro' : 'Modo Escuro'}>
+            <DIcon name={theme==='dark' ? 'sun' : 'moon'} size={16}/>
+          </button>
+        )}
         <button className="logout-btn" onClick={onLogout} title="Sair"><Ic>⏻</Ic></button>
       </div>
     </div>
@@ -7672,7 +7756,7 @@ function Sidebar({view, goto, role, user, collapsed, pendingSync=0}){
   );
 }
 
-function DesktopTopbar({view, user, role, onLogout, subtitle}){
+function DesktopTopbar({view, user, role, onLogout, subtitle, theme, onToggleTheme}){
   const [menuOpen, setMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const initials = user.nome.split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase();
@@ -7698,6 +7782,12 @@ function DesktopTopbar({view, user, role, onLogout, subtitle}){
           {menuOpen && (
             <div className="desktop-user-menu" onMouseLeave={()=>setMenuOpen(false)}>
               <div className="um-head"><strong>{user.nome}</strong><span>{ROLE_LABELS[role]}</span></div>
+              {onToggleTheme && (
+                <button onClick={()=>{onToggleTheme(); setMenuOpen(false);}}>
+                  <DIcon name={theme==='dark' ? 'sun' : 'moon'} size={15} />
+                  {theme==='dark' ? 'Modo Claro' : 'Modo Escuro'}
+                </button>
+              )}
               <button className="danger" onClick={onLogout}><DIcon name="logOut" size={15} /> Sair</button>
             </div>
           )}
@@ -14605,7 +14695,7 @@ function MonthlyAccuracyBarChart({months, meta=META_ACURACIDADE_SEMANAL, colorBy
 // Mini gráfico de linha, mais enxuto que WeeklyLineChart (sem meta, sem
 // rótulo "Sem N" em cima da data, sem % grande em cada ponto) — pensado pra
 // caber dentro do card "Saúde do Inventário", não como painel próprio.
-function HealthSparkline({pontos, color}){
+function HealthSparkline({pontos, color, bg='var(--panel)'}){
   // W/H eram 320/92 (proporção ~3,5:1) — largura do card cresceu bastante
   // (ver .health-chart, flex:3 sem teto de largura), e como o SVG escala
   // width:100%/height:auto MANTENDO a proporção do viewBox, a altura
@@ -14626,7 +14716,7 @@ function HealthSparkline({pontos, color}){
       ))}
       <polyline points={pts} fill="none" stroke={color} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
       {pontos.map((p,i)=>(
-        <circle key={p.key} cx={x(i)} cy={y(p.acuracidade)} r={5} fill={color} stroke="#fff" strokeWidth={2}>
+        <circle key={p.key} cx={x(i)} cy={y(p.acuracidade)} r={5} fill={color} stroke={bg} strokeWidth={2}>
           <title>{p.sublabel}: {p.acuracidade.toFixed(1)}%</title>
         </circle>
       ))}
@@ -14665,18 +14755,23 @@ function InventoryHealthCard({weeklyStats, meta=META_ACURACIDADE_SEMANAL}){
 
   // 4 faixas de status, relativas à META (não valores fixos) — assim o
   // rótulo continua fazendo sentido se o cliente um dia mudar a meta de 95%.
+  // As 4 faixas usam só tokens (nunca hex cru) — "Bom"/"Atenção"/"Crítico"
+  // reaproveitam --blue/--warn/--danger (mesmo papel semântico já existente,
+  // com valor de tema escuro já definido) em vez de cor solta — sem isso o
+  // card inteiro (background + textos, tudo via style inline) ficaria um
+  // bloco pastel claro cravado no meio de um painel escuro.
   let tier;
   if(atual.acuracidade >= meta) tier = {status:'Excelente', sub:'Você está dentro da meta!', color:'var(--teal)', bg:'var(--teal-bg)'};
-  else if(atual.acuracidade >= meta-10) tier = {status:'Bom', sub:'Perto da meta', color:'#2563EB', bg:'#EAF1FD'};
-  else if(atual.acuracidade >= meta-25) tier = {status:'Atenção', sub:'Abaixo da meta', color:'#B7791F', bg:'#FDF3E3'};
-  else tier = {status:'Crítico', sub:'Bem abaixo da meta', color:'#C4291B', bg:'#FBEAE8'};
+  else if(atual.acuracidade >= meta-10) tier = {status:'Bom', sub:'Perto da meta', color:'var(--blue)', bg:'var(--blue-bg)'};
+  else if(atual.acuracidade >= meta-25) tier = {status:'Atenção', sub:'Abaixo da meta', color:'var(--warn)', bg:'var(--warn-bg)'};
+  else tier = {status:'Crítico', sub:'Bem abaixo da meta', color:'var(--danger)', bg:'var(--danger-bg)'};
 
   const pontos = comDado.slice(-6);
 
   return (
     <div className="health-card" style={{background:tier.bg}}>
       <div className="health-left">
-        <div className="health-icon" style={{background:tier.color}}><DIcon name="shieldCheck" size={22} style={{color:'#fff'}} /></div>
+        <div className="health-icon" style={{background:tier.bg}}><DIcon name="shieldCheck" size={22} style={{color:tier.color}} /></div>
         <div className="health-text">
           <div className="health-eyebrow">Saúde do Inventário</div>
           <div className="health-status" style={{color:tier.color}}>{tier.status}</div>
@@ -14689,7 +14784,7 @@ function InventoryHealthCard({weeklyStats, meta=META_ACURACIDADE_SEMANAL}){
           )}
         </div>
       </div>
-      <div className="health-chart"><HealthSparkline pontos={pontos} color={tier.color} /></div>
+      <div className="health-chart"><HealthSparkline pontos={pontos} color={tier.color} bg={tier.bg} /></div>
       <div className="health-current">
         <div className="health-current-value" style={{color:tier.color}}>{atual.acuracidade.toFixed(1)}%</div>
         <div className="health-current-label">Acuracidade da semana</div>
@@ -15256,7 +15351,14 @@ function Dashboard({counts, inventories, historicoConcluidas=[], historicoParaTe
                 ) : porFamilia.map(([fam,n])=>(
                   <div key={fam} className="bar-row">
                     <div className="bl" style={{width:160}}>{fam}</div>
-                    <div className="bar-track"><div className="bar-fill" style={{width:(n/maxFamilia*100)+'%', background:'var(--teal)'}}><span style={{color:'#fff'}}>{n}</span></div></div>
+                    {/* Fundo/texto fixos (não var(--teal)/branco puro) — em tema
+                        escuro --teal vira um ciano bem claro (pensado pra ser
+                        TEXTO sobre fundo escuro, não preenchimento sólido), e
+                        branco em cima disso perderia contraste. Mesmo valor
+                        literal do modo claro de --teal, travado, igual já é
+                        feito com --safety/WEEKLY_CHART_COLOR noutros lugares —
+                        a barra fica idêntica nos dois temas, sempre legível. */}
+                    <div className="bar-track"><div className="bar-fill" style={{width:(n/maxFamilia*100)+'%', background:'#0D9488'}}><span style={{color:'#fff'}}>{n}</span></div></div>
                   </div>
                 ))}
               </div>
@@ -15346,7 +15448,11 @@ function Dashboard({counts, inventories, historicoConcluidas=[], historicoParaTe
                   {Object.entries(porMotivo).slice(0,7).map(([m,n])=>(
                     <div key={m} className="bar-row">
                       <div className="bl" style={{width:160}}>{m}</div>
-                      <div className="bar-track"><div className="bar-fill" style={{width:(n/maxMotivo*100)+'%', background:'var(--danger)'}}><span style={{color:'#fff'}}>{n}</span></div></div>
+                      {/* Mesmo raciocínio da barra teal acima — --danger no tema
+                          escuro é um vermelho-coral claro (ink sobre fundo
+                          escuro), branco em cima ficaria ilegível. Valor
+                          literal do modo claro, travado nos dois temas. */}
+                      <div className="bar-track"><div className="bar-fill" style={{width:(n/maxMotivo*100)+'%', background:'#C4291B'}}><span style={{color:'#fff'}}>{n}</span></div></div>
                     </div>
                   ))}
                 </div>
