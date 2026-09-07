@@ -22361,3 +22361,180 @@ deploy processar. **Verificação visual de ponta a ponta em produção (o taman
 proporção dos cards batendo de fato com Indicadores, a evolução mês a mês fazendo
 sentido com o histórico real) fica a cargo do cliente** — mesma limitação de sempre
 (login exige Supabase Auth real, não simulável no sandbox sem rede).
+
+## Modo Escuro (Dark Mode) — app inteiro, toggle no topbar/menu do usuário
+
+Cliente pediu um Modo Escuro completo pro sistema, com uma especificação bem detalhada:
+toggle acessível sem ocupar espaço demais, sem reload de página; preferência sobrevivendo
+a logout/login e a fechar/reabrir o app, reaproveitando "algum sistema de preferências do
+usuário" já existente em vez de criar um novo; aplicado em TODA a superfície do app
+(Sidebar, cabeçalho, cards, indicadores, tabelas, formulários, inputs, selects, botões,
+modais, dropdowns, gráficos, filtros, badges/status, telas de inventário, Acuracidade,
+Indicadores, Usuários, alertas, loading, estados vazios, tooltips); identidade visual
+PRÓPRIA — não "inverter as cores do sistema", preservando a marca Selgron, paleta escura
+elegante, bom contraste, aparência corporativa, evitando preto puro/excesso de cor/visual
+neon/**roxo**/contrastes exagerados/cards muito destacados; indicadores/gráficos com texto
+legível, contraste adequado nos eixos, legendas visíveis, hierarquia visual preservada nos
+KPIs, meta de 95% e outras infos-chave continuando fáceis de identificar — **sem alterar
+lógica/valor de nenhum indicador, só a apresentação visual**; transição suave sem
+flicker/quebra de layout; responsivo (Desktop/Tablet/Celular). Pedido explícito de
+estrutura ANTES de implementar: reutilizar a estrutura de preferência já existente em vez
+de duplicar, e centralizar a implementação pra ajuste de cor futuro sem precisar tocar
+tela por tela.
+
+### Estrutura escolhida — reaproveita 100% o mecanismo já existente, zero infraestrutura nova
+
+- **`usePersistedState('theme', 'light')`** (o MESMO hook genérico que já persiste
+  `users`/`inventories`/`counts`/etc. desde o início do projeto, ver "Persistência local
+  via localStorage" no topo deste arquivo) — chave `stock360:v1:theme` no `localStorage`.
+  Nenhum sistema de preferência novo foi criado, exatamente como pedido — o tema é só mais
+  um campo de estado persistido igual aos outros, sobrevive a fechar o navegador (não é
+  `sessionStorage`, diferente da sessão de login) e a trocar de tela, sem precisar de
+  nenhuma tabela nova no Supabase (é preferência de APARELHO/navegador, não uma
+  configuração administrável que precise valer em todos os aparelhos — não se aplica a
+  regra permanente de "Convenções de design" sobre `app_config`, já que tema não é
+  decidido pelo admin pros outros usuários, é escolha pessoal de quem está usando).
+- **`<html data-theme="dark|light">`** — um único atributo no elemento raiz, trocado via
+  `useEffect(() => document.documentElement.setAttribute('data-theme', theme), [theme])`
+  em `App()`. Todo o CSS reage a esse atributo através de um ÚNICO bloco novo,
+  `:root[data-theme="dark"]{...}`, redefinindo as MESMAS variáveis CSS que o app inteiro
+  já usava (`--bg`/`--panel`/`--panel-raised`/`--line`/`--ink`/`--ink-dim`/`--ok`/
+  `--ok-bg`/`--warn`/`--warn-bg`/`--danger`/`--danger-bg`/`--safety-bg`/`--accent2`/
+  `--purple`/`--purple-bg`/`--teal`/`--teal-bg`/`--blue`/`--blue-bg`/`--navy`/
+  `--gray-50/100/200/400/500`) — é isso que cumpre "centralizado, sem tocar tela por
+  tela": como praticamente TODA cor de fundo/texto/borda do app já vinha de uma dessas
+  variáveis (design system em CSS puro, documentado desde sempre neste arquivo — "não
+  usa Tailwind"), a imensa maioria dos componentes já ficou automaticamente compatível
+  com o tema escuro só pela redefinição das variáveis, sem precisar de nenhuma edição
+  JSX/CSS por componente.
+- **`--safety`/`--safety-ink` (laranja Selgron) NUNCA são redefinidos no bloco dark** —
+  deliberado: é a cor da marca, precisa parecer EXATAMENTE igual nos dois temas (botão
+  "Confirmar"/chips de destaque idênticos em claro e escuro) — não "escurecer" a
+  identidade visual da Selgron.
+- **`.login-page` ganha um re-pin específico**: `:root[data-theme="dark"] .login-page{
+  --navy:#0F172A; --gray-50:#F8FAFC; ...}` — a tela de login já usava essas MESMAS
+  variáveis (`--navy`/`--gray-*`) pra uma identidade corporativa própria, fixa, desde o
+  redesign "SAP Fiori/M365" documentado antes neste arquivo — sem esse re-pin, o Modo
+  Escuro (que redefine `--navy` globalmente pra um cinza bem claro, pra funcionar como
+  cor de TEXTO em fundo escuro no resto do app) quebraria a tela de login, virando um
+  card branco com texto branco ilegível. Escopado só a `.login-page` — não afeta em nada
+  o Dashboard/Sidebar, que também usam `--navy`, só que com outro propósito (fundo
+  sempre-escuro do menu, ver abaixo).
+- **`--purple`/`--purple-bg` continuam existindo no bloco dark, só com valor
+  redefinido** — não é uma cor NOVA de identidade escura introduzida por este trabalho:
+  é o mesmo token semântico já criado numa rodada bem anterior ("Padronização de fontes,
+  cores e tamanhos — Fase 0/1"), reservado pra um conjunto pequeno e específico de
+  contextos (chip/anel "reprovado pela Diretoria", ícone do KPI "Acuracidade Geral",
+  barra "Divergência por Família/Grupo") — nunca a cor de identidade/destaque geral do
+  tema escuro. A restrição do cliente ("evitar roxo") foi lida como "não usar roxo como
+  cor de destaque do Modo Escuro em si", não como "apagar um token semântico já
+  existente e em uso" — mantê-lo com um valor legível em fundo escuro é reaproveitar
+  estrutura já existente (outra exigência explícita do pedido), não introduzir roxo novo.
+- **3 hex fixos, deliberadamente FORA do sistema de tema** (documentados com comentário
+  inline em cada um): `.sidebar{background:#0F172A}`, `.sidebar-brand-divider::after`
+  (o anel decorativo ao redor do avatar) e `.mobile-nav-bar{background:#0F172A}` — a
+  Sidebar/rodapé mobile SEMPRE foram azul-marinho escuro, nos dois temas, desde que
+  esse layout desktop foi criado (documentado bem antes deste trabalho) — não reagem a
+  `var(--navy)` de propósito, porque essa variável passa a valer um cinza quase-branco
+  no tema escuro (pensada pra texto, não pra fundo) — usar `var(--navy)` ali trocaria a
+  Sidebar de "sempre escura" pra "clara no Modo Escuro", o oposto do que faz sentido.
+- **Transição suave, sem flicker/quebra de layout**: `*,*::before,*::after{
+  transition:background-color .2s ease, border-color .2s ease, color .2s ease;}` — regra
+  global, mas escopada só a propriedades de COR (nunca `width`/`height`/`padding`/
+  `transform`/etc.) — troca de tema anima suavemente sem nenhum "salto" de layout durante
+  a transição.
+- **`<select>` (native)**: `option` ganhou uma regra própria
+  (`.role-pill select option{background:var(--panel-raised);color:var(--ink);}`) — gotcha
+  clássico de tema escuro: o navegador não herda automaticamente a cor de fundo do
+  `<select>` pai pras `<option>`s dentro do dropdown nativo, ficando ilegível (texto claro
+  sobre fundo branco do SO) sem essa regra explícita.
+
+### Toggle — `TopBar` (mobile) e `DesktopTopbar` (desktop), reaproveitando os menus já
+### existentes, sem elemento novo tomando espaço
+
+- **`DIcon` ganhou 2 ícones novos** (`sun`/`moon`, mesmo estilo Lucide-ish já usado nos
+  outros ~30 ícones do app, `DICON_PATHS`) — usados só no toggle, nenhum emoji novo
+  (`EMOJI_TO_DICON`).
+- **`App()`**: `const [theme, setTheme] = usePersistedState('theme', 'light');` +
+  `toggleTheme()` (`setTheme(t => t==='dark' ? 'light' : 'dark')`) — passados como props
+  novas pra `TopBar`/`DesktopTopbar`.
+- **`TopBar` (mobile)**: o toggle entrou como mais um botão pequeno na mesma fileira que
+  já tinha o botão "Sair" — ícone sol/lua com `title` explicativo ("Ativar Modo Escuro"/
+  "Ativar Modo Claro"), sem texto (mesmo critério de "poucos elementos, ícone com
+  tooltip" já usado noutros botões compactos do topbar mobile) — não ocupa espaço extra
+  na barra, que já era apertada em telas pequenas.
+- **`DesktopTopbar`**: o toggle entrou dentro do MESMO dropdown do menu do usuário
+  (`.desktop-user-menu`, o mesmo que já tinha nome+perfil+"Sair") — um item de texto a
+  mais ("🌙 Ativar Modo Escuro"/"☀️ Ativar Modo Claro"), clicável, que troca o tema E
+  fecha o dropdown (mesmo comportamento de "Sair" já tinha) — reaproveita um menu que já
+  existia, sem adicionar nenhum ícone novo solto no header, exatamente como pedido
+  ("sem ocupar espaço excessivo").
+- Os dois pontos ficam condicionais à prop `onToggleTheme` existir — mantém os
+  componentes funcionando (sem o botão de tema) se algum dia forem usados sem essa prop.
+
+### Verificação
+
+Rigor extra de propósito nesta feature (toca virtualmente toda tela do app de uma vez):
+
+- **Harness funcional** (jsdom + react-dom/client + `act()`, mesma técnica rigorosa de
+  sempre — extrai os componentes reais do `index.html`, transpila via Babel
+  (`transformSync`, `runtime:'classic'` — a automatic runtime do Babel 8 emite `import`
+  ES incompatível com `vm.runInContext`), roda numa `vm`) — 22 asserções: `TopBar`
+  mostra o botão certo (ícone/título) por valor de `theme`, chama `onToggleTheme` ao
+  clicar, e não mostra nenhum botão de tema quando a prop não é passada; `DesktopTopbar`
+  — dropdown nasce fechado, abre mostrando o item de tema com o texto certo, clicar
+  troca de tema E fecha o dropdown, e sem `onToggleTheme` o dropdown só mostra "Sair";
+  `usePersistedState('theme','light')` — valor padrão sem nada salvo, leitura de um
+  valor `'dark'` já salvo, e um ciclo completo montar→alternar→alternar confirmando o
+  valor exato persistido na chave real `stock360:v1:theme` (JSON) a cada passo.
+  **Confirmado que o harness pega a ausência da feature de verdade**: rodado via `git
+  stash` contra o `index.html` de ANTES do Modo Escuro, falha na própria checagem de
+  sanidade (`DICON_PATHS` sem `sun`/`moon`) — não é um harness que passaria de qualquer
+  jeito.
+- **Achado só de infraestrutura de teste, não bug do app**: a 1ª versão do harness usava
+  `React.act` direto — quebrava silenciosamente porque a versão de React instalada no
+  sandbox (18.2.0) só expõe `React.unstable_act` (o nome `act` só existe a partir do
+  18.3) — sem um `act()` de verdade, `createRoot().render()` não teve a garantia de
+  flush síncrono, e os componentes apareciam vazios no DOM mesmo estando corretos.
+  Diagnosticado isolando `TopBar` num script à parte, confirmando que o COMPONENTE
+  sempre esteve certo — só o helper de teste precisava resolver `React.act ||
+  React.unstable_act || require('react-dom/test-utils').act`.
+- **Revisão estática de conformidade com cada restrição visual do cliente**, lendo o CSS
+  extraído por completo: sem preto puro (`--bg:#14161B`, não `#000`); `--safety`/
+  `--safety-ink` idênticos nos dois temas (marca preservada); `--purple` só no escopo
+  semântico pré-existente já documentado, nunca virando cor de identidade do tema
+  (analisado acima); tela de login isolada do tema global via o re-pin em `.login-page`;
+  transição só em propriedades de cor; `<option>` de `<select>` nativo com regra própria
+  de legibilidade; os 3 hex fixos da Sidebar/rodapé mobile confirmados com justificativa
+  documentada (sempre-escuros nos dois temas, por design pré-existente).
+- **Gráficos/eixos**: lidos por completo os 5 componentes de gráfico do app
+  (`WeeklyLineChart`/`WeeklyCountChart`/`MonthlyAccuracyBarChart`/`HealthSparkline`/
+  `PnlDonut`) — confirmado que TODA linha de grade, rótulo de eixo, legenda e texto de
+  valor já usava `var(--line)`/`var(--ink-dim)`/`var(--ink)`/`var(--navy)`/
+  `var(--gray-500)` (nunca hex fixo) — herdam o tema automaticamente, sem precisar de
+  nenhuma edição. Confirmado por grep que **`WEEKLY_CHART_COLOR = '#0D9488'`** (o teal
+  das linhas/barras de dado) é o ÚNICO hex de cor de gráfico fixo em todo o arquivo —
+  mantido igual nos dois temas de propósito (mesma cor de dado em claro/escuro, prática
+  comum de qualquer ferramenta de gráfico — só ficaria errado se fosse ilegível num dos
+  dois fundos, o que não é o caso, teal médio contra tanto branco quanto grafite escuro).
+- **Verificação visual via Playwright** (Chromium, `/opt/pw-browsers/chromium`) — como o
+  app exige login real (Supabase Auth, não simulável no sandbox sem rede, limitação já
+  documentada neste arquivo pra qualquer feature anterior), a verificação visual seguiu
+  o mesmo padrão alternativo já usado outras vezes neste projeto: uma página estática
+  isolada, injetando o CSS REAL extraído do `<style>` de `index.html` e marcando
+  `data-theme` no `<html>`, com uma amostra representativa de cada superfície pedida
+  (item de Sidebar, topbar, 2 KPI cards, tabela com 3 status/badge, formulário com
+  input/select/botão primário/outline, dropdown de menu "⋮", um gráfico de linha
+  completo com eixo/meta/dado). Screenshot em 3 larguras (1400/900/390px) × 2 temas — 6
+  imagens no total, inspecionadas visualmente (desktop light, desktop dark e mobile
+  dark revisados em detalhe): confirma paleta escura elegante e de alto contraste, sem
+  preto puro, sem neon, sem roxo como identidade, laranja Selgron idêntico nos dois
+  temas, badges de status (verde/vermelho/âmbar) claramente distinguíveis em fundo
+  escuro, gráfico com eixos/legenda/meta/linha de dado todos legíveis, e layout estável
+  (sem quebra) nas 3 larguras testadas.
+
+**Nenhuma migração de SQL nem redeploy de Edge Function necessários** — é 100% front-end
+(JS/CSS), publica sozinho via GitHub Pages assim que o deploy processar. **Verificação de
+ponta a ponta em produção (a troca de tema de verdade, em cada tela real do app, com
+sessão autenticada) fica a cargo do cliente** — mesma limitação de sempre (login exige
+Supabase Auth real, não simulável no sandbox sem rede).
