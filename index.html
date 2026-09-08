@@ -438,6 +438,14 @@
   .radio-opt input{width:20px;height:20px;accent-color:var(--safety);}
   .radio-opt .opt-title{font-weight:600;font-size:var(--text-md);}
   .radio-opt .opt-desc{font-size:var(--text-sm);color:var(--ink-dim);margin-top:2px;}
+  /* Fallback pra .opt-title/.opt-desc usados FORA de .radio-opt (dentro de
+     <button className="item-card">, ex. NewInventory/PickCountType — telas
+     "Nova Contagem") — sem isso ficam sem nenhuma regra própria, herdando a
+     cor de texto padrão do navegador pra <button> (não var(--ink)), o que só
+     "funcionava por acidente" no tema claro (preto sobre painel claro) e
+     ficava ilegível no Modo Escuro (bug real: texto quase invisível). */
+  .opt-title{font-weight:600;font-size:var(--text-md);color:var(--ink);}
+  .opt-desc{font-size:var(--text-sm);color:var(--ink-dim);margin-top:2px;}
 
   /* STATUS */
   .status-tag{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:var(--text-xs);font-weight:700;text-transform:uppercase;padding:4px 9px;border-radius:20px;letter-spacing:0.3px;}
@@ -453,7 +461,12 @@
      próprio card"). Nenhum filho deste card toca a borda de ponta a ponta
      (sem barra colorida cheia como .count-card-bar abaixo), então perder o
      clipping de canto não muda nada visualmente aqui. */
-  .item-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px;position:relative;}
+  /* color:var(--ink) explícito aqui é necessário pros casos em que .item-card
+     é um <button> (ex. NewInventory/PickCountType) — <button> não herda a cor
+     de texto do body por padrão, cai na cor de botão do navegador (~preto),
+     invisível no Modo Escuro. Quando .item-card é <div>, este color é só
+     redundante com o que já vem do body, sem efeito nenhum. */
+  .item-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px;position:relative;color:var(--ink);}
   .item-card.urgente{box-shadow:0 0 0 3px var(--danger), 0 1px 3px rgba(0,0,0,.04);}
   .item-card-head{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
   .item-code{font-family:var(--font-mono);font-size:var(--text-sm);color:var(--safety);letter-spacing:0.5px;}
@@ -1138,6 +1151,15 @@
     .desktop-topbar-title{font-family:var(--font-corp);font-size:20px;font-weight:700;color:var(--navy);letter-spacing:-0.1px;}
     .desktop-topbar-subtitle{font-family:var(--font-corp);font-size:var(--text-sm);color:var(--gray-500);}
     .desktop-topbar-right{display:flex;align-items:center;gap:14px;}
+    /* Botão liga/desliga do Modo Escuro — pedido do cliente pra ficar direto
+       na topbar, ao lado do sino, em vez de escondido dentro do menu do
+       usuário. Track muda de cor (cinza→laranja da marca) e o "knob" desliza
+       de lado, ícone sol/lua dentro dele indicando o estado atual. */
+    .theme-switch{position:relative;width:44px;height:24px;border-radius:999px;border:none;background:var(--gray-200);flex-shrink:0;cursor:pointer;padding:0;transition:background-color .2s ease;}
+    .theme-switch:hover{filter:brightness(0.95);}
+    .theme-switch.on{background:var(--safety);}
+    .theme-switch .knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;color:var(--gray-500);transition:left .2s ease,color .2s ease;}
+    .theme-switch.on .knob{left:22px;color:var(--safety);}
     .desktop-bell{width:36px;height:36px;border-radius:8px;border:1px solid var(--gray-200);background:var(--panel);display:flex;align-items:center;justify-content:center;color:var(--gray-500);flex-shrink:0;}
     .desktop-bell:hover{background:var(--gray-50);color:var(--navy);}
     .desktop-notif-menu{position:absolute;top:60px;right:32px;background:var(--panel);border:1px solid var(--gray-200);border-radius:var(--radius);box-shadow:0 8px 24px rgba(15,23,42,.12);width:240px;padding:16px;z-index:50;font-family:var(--font-corp);font-size:var(--text-sm);color:var(--gray-500);text-align:center;}
@@ -7772,6 +7794,18 @@ function DesktopTopbar({view, user, role, onLogout, subtitle, theme, onToggleThe
         {subtitle && <div className="desktop-topbar-subtitle">{subtitle}</div>}
       </div>
       <div className="desktop-topbar-right">
+        {onToggleTheme && (
+          <button
+            type="button"
+            className={'theme-switch' + (theme==='dark' ? ' on' : '')}
+            onClick={onToggleTheme}
+            role="switch"
+            aria-checked={theme==='dark'}
+            title={theme==='dark' ? 'Modo Escuro ativado — clique para voltar ao Modo Claro' : 'Modo Claro ativado — clique para ativar o Modo Escuro'}
+          >
+            <span className="knob"><DIcon name={theme==='dark' ? 'moon' : 'sun'} size={12} /></span>
+          </button>
+        )}
         <div style={{position:'relative'}}>
           <button className="desktop-bell" onClick={()=>{setNotifOpen(o=>!o); setMenuOpen(false);}} title="Notificações"><DIcon name="bell" size={17} /></button>
           {notifOpen && (
@@ -7787,12 +7821,6 @@ function DesktopTopbar({view, user, role, onLogout, subtitle, theme, onToggleThe
           {menuOpen && (
             <div className="desktop-user-menu" onMouseLeave={()=>setMenuOpen(false)}>
               <div className="um-head"><strong>{user.nome}</strong><span>{ROLE_LABELS[role]}</span></div>
-              {onToggleTheme && (
-                <button onClick={()=>{onToggleTheme(); setMenuOpen(false);}}>
-                  <DIcon name={theme==='dark' ? 'sun' : 'moon'} size={15} />
-                  {theme==='dark' ? 'Modo Claro' : 'Modo Escuro'}
-                </button>
-              )}
               <button className="danger" onClick={onLogout}><DIcon name="logOut" size={15} /> Sair</button>
             </div>
           )}
