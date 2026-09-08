@@ -15839,7 +15839,18 @@ function AcuracidadePanel({counts, historicoConcluidas=[], historicoParaTendenci
   // Mesmo dedup por documento já usado em Indicadores/Home — só a rodada
   // FINAL de cada item conta (ver comentário completo em `Dashboard`,
   // perto de `ultimaContagemPorDocumento`).
-  const todasParaQualidade = ultimaContagemPorDocumento([...counts, ...historicoComoContagem]);
+  // Pedido explícito do cliente: "considere apenas itens com a contagem
+  // concluída, desconsidere itens que estão em qualquer outra etapa" — só
+  // pra esta página. Diferente de `inventarioCiclicoStatusIncluido` (que
+  // inclui de propósito `aguardando_aprovacao_diretoria` pra outro
+  // relatório, por outro pedido explícito), aqui a exclusão é estrita: os
+  // 4 status de `OPEN_STATUSES` ficam de fora, sem exceção nenhuma. Linha
+  // do histórico importado nunca precisa de tratamento especial — sempre
+  // `statusAprovacao:null` (ver `historicoRowToCountLike`), e como
+  // `historicoConcluidas` já vem filtrada no servidor só pros status
+  // concluídos da planilha, `null` já passa neste filtro sem ambiguidade.
+  const todasParaQualidade = ultimaContagemPorDocumento([...counts, ...historicoComoContagem])
+    .filter(c => !OPEN_STATUSES.includes(c.statusAprovacao));
 
   const hojeStr = hojeLocalStr();
   const trendRange = computeTrendRange(trendFilter.tipo, hojeStr, trendFilter.from, trendFilter.to);
