@@ -1468,6 +1468,43 @@
   .modal-close-btn{background:none;border:none;cursor:pointer;color:var(--ink-dim);padding:4px;border-radius:6px;display:flex;flex-shrink:0;}
   .modal-close-btn:hover{background:var(--gray-100);color:var(--ink);}
 
+  /* Drill-down "Acuracidade Mensal — Itens Recorrentes" (AcuracidadeMesDetalheModal)
+     — redesenho pedido pelo cliente: 1 linha por PRODUTO, com as contagens desse
+     produto (1ª/2ª/3ª) lado a lado como blocos, em vez de 1 linha por documento
+     numa tabela genérica. Puramente visual — nenhum cálculo mudou, só a forma de
+     apresentar `itens` (já filtrado/calculado por `computeAcuracidadeItensRecorrentes`).
+     Sem sticky header/coluna (evitado de propósito — comportamento de
+     `position:sticky` dentro de um wrapper com overflow-x:auto sozinho é frágil,
+     arriscando virar container de scroll nos dois eixos sem querer); em vez disso,
+     `.acc-detail-blocks` usa flex-wrap — em tela estreita os blocos de contagem
+     descem pra baixo do produto, ou uns embaixo dos outros, sem nunca depender de
+     rolagem horizontal nem de encolher a fonte. */
+  .acc-detail-list{display:flex;flex-direction:column;}
+  .acc-detail-row{display:flex;flex-wrap:wrap;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);align-items:flex-start;}
+  .acc-detail-row:last-child{border-bottom:none;}
+  .acc-detail-produto{flex:0 0 200px;min-width:180px;}
+  .acc-detail-produto-codigo{font-family:var(--font-mono);font-size:var(--text-xs);font-weight:700;color:var(--ink-dim);}
+  .acc-detail-produto-desc{font-size:var(--text-sm);font-weight:600;color:var(--ink);margin:2px 0 8px;}
+  .acc-detail-produto-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;}
+  .acc-detail-produto-meta{font-size:var(--text-2xs);color:var(--ink-dim);line-height:1.5;}
+  .acc-detail-blocks{display:flex;flex-wrap:wrap;gap:10px;flex:1;min-width:220px;}
+  .acc-detail-block{background:var(--panel-raised);border-radius:var(--radius);border-left:3px solid var(--line);padding:10px 12px;min-width:140px;flex:1 1 140px;}
+  .acc-detail-block.acurado{background:var(--ok-bg);border-left-color:var(--ok);}
+  .acc-detail-block.divergente{border-left-color:var(--danger);}
+  .acc-detail-block.sem-dado{opacity:.7;}
+  .acc-detail-block-label{font-family:var(--font-mono);font-size:var(--text-2xs);font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--ink-dim);display:flex;align-items:center;gap:6px;}
+  .acc-detail-block-extra{background:var(--panel);border-radius:20px;padding:1px 6px;font-size:var(--text-2xs);color:var(--ink-dim);}
+  .acc-detail-block-acc{font-family:var(--font-mono);font-size:20px;font-weight:800;margin:5px 0 8px;color:var(--ink);}
+  .acc-detail-block.acurado .acc-detail-block-acc{color:var(--ok);}
+  .acc-detail-block.divergente .acc-detail-block-acc{color:var(--danger);}
+  .acc-detail-block.sem-dado .acc-detail-block-acc{color:var(--ink-dim);}
+  .acc-detail-block-fields{display:flex;gap:12px;}
+  .acc-detail-block-fields>div{display:flex;flex-direction:column;min-width:34px;}
+  .acc-detail-block-fields .k{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.3px;color:var(--ink-dim);}
+  .acc-detail-block-fields .v{font-family:var(--font-mono);font-size:var(--text-sm);font-weight:700;color:var(--ink);}
+  .acc-detail-block-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;font-size:var(--text-2xs);color:var(--ink-dim);}
+  .acc-detail-block-motivo{font-size:var(--text-2xs);color:var(--ink-dim);margin-top:6px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
   /* Painel/TV de separação — linha da máquina "Em Separação" (destacada) e
      chip "Urgente" (mesma cor/ícone já usados em .count-card.urgente pra
      contagem — reaproveita o vocabulário visual já estabelecido nesse app
@@ -15638,19 +15675,53 @@ function AcuracidadeMesDetalheModal({mes, itens, onClose}){
 
   // Divergentes primeiro (o que mais interessa pra entender "por que caiu"),
   // depois sem dado, depois acurados — dentro do mesmo grupo, mais antigo
-  // primeiro (ordem cronológica de leitura).
+  // primeiro (ordem cronológica de leitura). Usado mais abaixo pra ordenar
+  // as LINHAS (por produto), não mais os documentos individuais.
   const ORDEM_RESULTADO = {divergente:0, sem_dado:1, acurado:2};
-  const itensOrdenados = [...itens].sort((a,b)=>{
-    const d = (ORDEM_RESULTADO[a.resultado] ?? 3) - (ORDEM_RESULTADO[b.resultado] ?? 3);
-    if(d!==0) return d;
-    return (a.data||'').localeCompare(b.data||'') || (a.hora||'').localeCompare(b.hora||'');
-  });
 
   // Mesmo padrão de ícone trendingUp/trendingDown/minus já usado noutro
   // lugar do app pra "subiu/desceu/estável" (ver perto de `KpiTrend`).
   const EVOLUCAO_ICON = {melhorou:'trendingUp', piorou:'trendingDown', manteve:'minus'};
   const EVOLUCAO_COR = {melhorou:'var(--ok)', piorou:'var(--danger)', manteve:'var(--ink-dim)'};
   const EVOLUCAO_LABEL = {melhorou:'Melhorou', piorou:'Piorou', manteve:'Manteve'};
+
+  // Redesenho: 1 linha por PRODUTO (não por documento) — cada contagem do
+  // mesmo produto (1ª/2ª/3ª) vira um bloco lado a lado dentro da mesma linha,
+  // em vez de linhas separadas numa tabela. `rodadaOrdinal` deriva a posição
+  // (1ª/2ª/3ª+) usando só os campos que `computeAcuracidadeItensRecorrentes`
+  // já calcula sobre o HISTÓRICO INTEIRO do item (`dataPrimeiraContagem`/
+  // `dataSegundaContagem`) — nunca recalcula nada, só lê o que já existe.
+  function rodadaOrdinal(it){
+    if(it.data===it.dataPrimeiraContagem) return 1;
+    if(it.dataSegundaContagem && it.data===it.dataSegundaContagem) return 2;
+    return 3; // 3ª ou posterior — sempre a mais recente disponível neste mês
+  }
+
+  const porProduto = {};
+  itens.forEach(it=>{
+    (porProduto[it.productCode] = porProduto[it.productCode] || []).push(it);
+  });
+
+  const linhas = Object.values(porProduto).map(docsBrutos=>{
+    const docs = [...docsBrutos].sort((a,b)=> (a.data||'').localeCompare(b.data||'') || (a.hora||'').localeCompare(b.hora||''));
+    const porRodada = {};
+    docs.forEach(it=>{
+      const n = rodadaOrdinal(it);
+      // Raro: 2+ documentos deste produto caindo na mesma "rodada 3+" dentro do
+      // mesmo mês (4+ recontagens no total) — guarda todos, mostra o mais
+      // recente como o bloco principal (badge "+N" avisa que há mais, com o
+      // detalhe no title — nunca descarta informação silenciosamente).
+      (porRodada[n] = porRodada[n] || []).push(it);
+    });
+    const ultimo = docs[docs.length-1];
+    return {productCode: ultimo.productCode, descricao: ultimo.descricao, porRodada, ultimo};
+  });
+
+  linhas.sort((a,b)=>{
+    const d = (ORDEM_RESULTADO[a.ultimo.resultado] ?? 3) - (ORDEM_RESULTADO[b.ultimo.resultado] ?? 3);
+    if(d!==0) return d;
+    return (a.ultimo.data||'').localeCompare(b.ultimo.data||'') || (a.ultimo.hora||'').localeCompare(b.ultimo.hora||'');
+  });
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -15686,69 +15757,68 @@ function AcuracidadeMesDetalheModal({mes, itens, onClose}){
           </div>
         </div>
 
-        {itens.length===0 ? (
-          <div style={{color:'var(--ink-dim)',fontSize:'var(--text-sm)'}}>Nenhum documento neste mês.</div>
+        {linhas.length===0 ? (
+          <div className="empty-state">Nenhum documento neste mês.</div>
         ) : (
-          <div style={{overflowX:'auto'}}>
-            <table className="rank-table">
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Contagem considerada</th>
-                  <th className="num">Sistema → Físico (Δ)</th>
-                  <th>Documentos</th>
-                  <th>Resultado</th>
-                  <th>Recorrência</th>
-                  <th>Evolução</th>
-                  <th>Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {itensOrdenados.map((it,idx)=>(
-                  <tr key={it.productCode+'-'+it.data+'-'+idx}>
-                    <td>
-                      <div style={{fontSize:'var(--text-xs)',fontWeight:700,color:'var(--ink-dim)'}}>{reconstructNumericCode(it.productCode)}</div>
-                      <div>{it.descricao}</div>
-                    </td>
-                    <td>{fmtDataBR(it.data)}{it.hora ? (' '+it.hora) : ''}</td>
-                    <td className="num">
-                      {it.saldoSistema==null ? '—' : it.saldoSistema}
-                      {' → '}
-                      {it.qtdContada==null ? '—' : it.qtdContada}
-                      {it.diferenca!=null && (
-                        <div style={{fontSize:'var(--text-xs)',color: it.diferenca===0 ? 'var(--ok)' : 'var(--danger)'}}>
-                          Δ {it.diferenca>0?'+':''}{it.diferenca}
-                        </div>
+          <div className="acc-detail-list">
+            {linhas.map((linha, idx)=>{
+              const rodadasPresentes = Object.keys(linha.porRodada).map(Number).sort((a,b)=>a-b);
+              return (
+                <div className="acc-detail-row" key={linha.productCode+'-'+idx}>
+                  <div className="acc-detail-produto">
+                    <div className="acc-detail-produto-codigo">{reconstructNumericCode(linha.productCode)}</div>
+                    <div className="acc-detail-produto-desc">{linha.descricao}</div>
+                    <div className="acc-detail-produto-tags">
+                      {linha.ultimo.resultado==='acurado' && <StatusTag status="ok" text="Acurado" />}
+                      {linha.ultimo.resultado==='divergente' && <StatusTag status="danger" text="Divergente" />}
+                      {linha.ultimo.resultado==='sem_dado' && <StatusTag status="warn" text="Sem dado" />}
+                      {linha.ultimo.recorrenciaDivergencia && (
+                        <span className="category-chip" style={{background:'var(--danger-bg)',color:'var(--danger)'}} title="Este item já divergiu em 2 ou mais contagens no histórico completo">Recorrente</span>
                       )}
-                    </td>
-                    <td>
-                      {it.totalDocumentos}
-                      <div style={{fontSize:'var(--text-xs)',color:'var(--ink-dim)'}}>
-                        1ª: {fmtDataBR(it.dataPrimeiraContagem)}{it.dataSegundaContagem ? (' · 2ª: '+fmtDataBR(it.dataSegundaContagem)) : ''}
-                      </div>
-                    </td>
-                    <td>
-                      {it.resultado==='acurado' && <StatusTag status="ok" text="Acurado" />}
-                      {it.resultado==='divergente' && <StatusTag status="danger" text="Divergente" />}
-                      {it.resultado==='sem_dado' && <StatusTag status="warn" text="Sem dado" />}
-                    </td>
-                    <td>
-                      {it.recorrenciaDivergencia
-                        ? <span className="category-chip" style={{background:'var(--danger-bg)',color:'var(--danger)'}}>Recorrente</span>
-                        : <span style={{color:'var(--ink-dim)'}}>—</span>}
-                    </td>
-                    <td>
-                      {it.evolucao && EVOLUCAO_ICON[it.evolucao] ? (
-                        <span style={{display:'inline-flex',alignItems:'center',gap:5,color:EVOLUCAO_COR[it.evolucao]}}>
-                          <DIcon name={EVOLUCAO_ICON[it.evolucao]} size={14} /> {EVOLUCAO_LABEL[it.evolucao]}
-                        </span>
-                      ) : <span style={{color:'var(--ink-dim)'}}>—</span>}
-                    </td>
-                    <td>{it.motivo || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                    <div className="acc-detail-produto-meta">
+                      {linha.ultimo.totalDocumentos} documento(s) no histórico
+                      {linha.ultimo.dataSegundaContagem && (
+                        <> · 1ª: {fmtDataBR(linha.ultimo.dataPrimeiraContagem)} · 2ª: {fmtDataBR(linha.ultimo.dataSegundaContagem)}</>
+                      )}
+                    </div>
+                  </div>
+                  <div className="acc-detail-blocks">
+                    {rodadasPresentes.map(n=>{
+                      const docsRodada = linha.porRodada[n];
+                      const it = docsRodada[docsRodada.length-1];
+                      const extras = docsRodada.length - 1;
+                      const classeResultado = it.diferenca==null ? 'sem-dado' : (it.diferenca===0 ? 'acurado' : 'divergente');
+                      return (
+                        <div key={n} className={"acc-detail-block "+classeResultado}>
+                          <div className="acc-detail-block-label">
+                            <span>{n}ª CONTAGEM</span>
+                            {extras>0 && <span className="acc-detail-block-extra" title={extras+' contagem(ns) adicional(is) neste mês nesta mesma posição — mostrando a mais recente'}>+{extras}</span>}
+                          </div>
+                          <div className="acc-detail-block-acc">{it.acuracidade==null ? '—' : (it.acuracidade*100).toFixed(1)+'%'}</div>
+                          <div className="acc-detail-block-fields">
+                            <div><span className="k">Sistema</span><span className="v">{it.saldoSistema==null ? '—' : it.saldoSistema}</span></div>
+                            <div><span className="k">Físico</span><span className="v">{it.qtdContada==null ? '—' : it.qtdContada}</span></div>
+                            <div><span className="k">Δ</span><span className="v" style={{color: it.diferenca==null ? undefined : (it.diferenca===0 ? 'var(--ok)' : 'var(--danger)')}}>{it.diferenca==null ? '—' : (it.diferenca>0?'+':'')+it.diferenca}</span></div>
+                          </div>
+                          <div className="acc-detail-block-foot">
+                            <span>{fmtDataBR(it.data)}{it.hora ? (' '+it.hora) : ''}</span>
+                            {it.evolucao && EVOLUCAO_ICON[it.evolucao] && (
+                              <span style={{display:'inline-flex',alignItems:'center',gap:3,color:EVOLUCAO_COR[it.evolucao]}} title={EVOLUCAO_LABEL[it.evolucao]+' em relação à contagem anterior'}>
+                                <DIcon name={EVOLUCAO_ICON[it.evolucao]} size={11} />{EVOLUCAO_LABEL[it.evolucao]}
+                              </span>
+                            )}
+                          </div>
+                          {it.motivo && (
+                            <div className="acc-detail-block-motivo" title={it.motivo}>{it.motivo}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
